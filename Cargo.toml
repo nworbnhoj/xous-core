@@ -91,6 +91,7 @@ members = [
   "apps/repl",
   "kernel",
   "services/espeak",
+  "services/espeak/sys",
 ]
 resolver = "2"
 
