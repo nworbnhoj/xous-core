@@ -256,7 +256,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             build_hw_image(false,
                 Some("./precursors/soc.svd".to_string()),
                 &pkgs,
-                lkey, kkey, None, &[])?
+                lkey, kkey,
+                Some(&["--features", "braille"]),
+                &[])?
         }
         Some("hw-image") => {
             let mut pkgs = vec![];
