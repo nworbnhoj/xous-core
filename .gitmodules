@@ -1,0 +1,3 @@
+[submodule "services/espeak/sys/espeak-ng"]
+	path = services/espeak/sys/espeak-ng
+	url = https://github.com/betrusted-io/espeak-ng.git
