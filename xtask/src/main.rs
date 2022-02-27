@@ -243,6 +243,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &pkgs,
                 lkey, kkey, None, &[])?
         }
+        Some("espeak") => {
+            let mut args = env::args();
+            args.nth(1);
+            let mut pkgs = hw_pkgs.to_vec();
+            let apps: Vec<String> = args.collect();
+            for app in &apps {
+                pkgs.push(app);
+            }
+            pkgs.push("espeak");
+            generate_app_menus(&apps);
+            build_hw_image(false,
+                Some("./precursors/soc.svd".to_string()),
+                &pkgs,
+                lkey, kkey, None, &[])?
+        }
         Some("hw-image") => {
             let mut pkgs = vec![];
             for pkg in hw_pkgs {
@@ -387,6 +402,7 @@ Various debug configurations:
  pddb-dev                PDDB testing only for live hardware
  pddb-hosted             PDDB testing in a hosted environment
  pddb-ci                 PDDB config for CI testing (eg: TRNG->deterministic for reproducible errors)
+ espeak                  espeak-ng/braille environment development (warning: includes a boatload of less secure C FFIs & requires additional toolchain setup)
 
 "
     )

@@ -15,7 +15,7 @@ fn xmain() -> ! {
     info!("my PID is {}", xous::process::id());
 
     let xns = xous_names::XousNames::new().unwrap();
-    let espeak_sid = xns.register_name(api::SERVER_NAME_ESPEAK).expect("can't register server");
+    let espeak_sid = xns.register_name(api::SERVER_NAME_ESPEAK, None).expect("can't register server");
     log::trace!("registered with NS -- {:?}", espeak_sid);
 
     loop {
