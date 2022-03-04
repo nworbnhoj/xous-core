@@ -826,6 +826,7 @@ name = "espeak"
 version = "0.1.0"
 dependencies = [
  "codec",
+ "espeak_sys",
  "log",
  "log-server",
  "num-derive",
@@ -2133,6 +2134,7 @@ dependencies = [
  "dns",
  "ed25519-dalek",
  "engine-25519",
+ "espeak",
  "gam",
  "graphics-server",
  "hex",

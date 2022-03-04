@@ -257,7 +257,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Some("./precursors/soc.svd".to_string()),
                 &pkgs,
                 lkey, kkey,
-                Some(&["--features", "braille"]),
+                Some(&["--features", "braille", "--features", "stt"]),
                 &[])?
         }
         Some("hw-image") => {

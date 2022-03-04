@@ -1,9 +1,15 @@
 #![cfg_attr(target_os = "none", no_std)]
 
+extern crate espeak_sys;
+
+pub mod bindings;
+pub use bindings::*;
+
 pub mod api;
 use xous::{CID, send_message};
 use num_traits::ToPrimitive;
 
+#[derive(Debug)]
 pub struct Espeak {
     conn: CID,
 }
@@ -14,6 +20,16 @@ impl Espeak {
         Ok(Espeak {
             conn
         })
+    }
+    pub fn test<S: Into<String>>(&self, text: S) -> Result<(), xous::Error> {
+        unsafe {
+            espeak_ffi_synth(std::ffi::CString::new(text.into())
+            .map_err(|_| xous::Error::InternalError)?
+            .as_ptr(),
+            // obviously, this is a bodge: need to decompose the above pointer thing
+            42);
+        }
+        Ok(())
     }
 }
 

@@ -2,7 +2,6 @@ extern crate cc;
 
 use std::env::var;
 use std::env::set_var;
-use std::path::Path;
 
 fn main() {
     set_var("CC", "riscv64-unknown-elf-gcc");  // set the compiler to what's installed on the system
@@ -24,10 +23,9 @@ fn main() {
         "espeak-ng/src/libespeak-ng/synth_mbrola.c",
         "espeak-ng/src/libespeak-ng/phoneme.c",
         "espeak-ng/src/libespeak-ng/phonemelist.c",
-        "espeak-ng/src/libespeak-ng/compiledict.c",
+        //"espeak-ng/src/libespeak-ng/compiledict.c",
         "espeak-ng/src/libespeak-ng/mnemonics.c",
         "espeak-ng/src/libespeak-ng/error.c",
-        "espeak-ng/src/libespeak-ng/libc.c",
         "espeak-ng/src/ucd-tools/src/case.c",
         "espeak-ng/src/ucd-tools/src/categories.c",
         "espeak-ng/src/ucd-tools/src/ctype.c",
@@ -43,6 +41,8 @@ fn main() {
         //"espeak-ng/src/libespeak-ng/spect.c",
         //"espeak-ng/src/libespeak-ng/ssml.c",
         "espeak-ng/src/ffi.c",
+        "espeak-ng/src/libc.c",
+        "espeak-ng/src/scanf.c",
     ];
     let espeak_includes = vec![
         "espeak-ng/src",
@@ -68,6 +68,7 @@ fn main() {
         base_config.file(src);
     }
     base_config.define("XOUS", None);
+    base_config.define("NO_STD", None);
 	base_config.compile("libespeak.a");
 }
 
