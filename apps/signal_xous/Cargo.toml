@@ -26,5 +26,12 @@ com = {path = "../../services/com"}
 llio = {path = "../../services/llio"}
 codec = {path = "../../services/codec"}
 
+regex = "1.5.4"
+thiserror = { version = "^1.0.30", default-features = false }
+presage = { git = "https://github.com/whisperfish/presage" }
+
+
 [features]
 default = []
+
+
