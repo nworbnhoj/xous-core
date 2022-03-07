@@ -21,7 +21,7 @@ pub(crate) enum ReplOp {
 }
 
 // This name should be (1) unique (2) under 64 characters long and (3) ideally descriptive.
-pub(crate) const SERVER_NAME_REPL: &str = "Signal";
+pub(crate) const SERVER_NAME_SIGNAL_XOUS: &str = "Signal";
 
 #[xous::xous_main]
 fn xmain() -> ! {
@@ -31,7 +31,7 @@ fn xmain() -> ! {
 
     let xns = xous_names::XousNames::new().unwrap();
     // unlimited connections allowed, this is a user app and it's up to the app to decide its policy
-    let sid = xns.register_name(SERVER_NAME_REPL, None).expect("can't register server");
+    let sid = xns.register_name(SERVER_NAME_SIGNAL_XOUS, None).expect("can't register server");
     // log::trace!("registered with NS -- {:?}", sid);
 
     let mut repl = Repl::new(&xns, sid);
