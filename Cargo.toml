@@ -91,6 +91,7 @@ members = [
   "apps/repl",
   "apps/signal_xous",
   "services/libstd-test",
+  "services/ffi-test",
   "kernel",
 ]
 resolver = "2"
