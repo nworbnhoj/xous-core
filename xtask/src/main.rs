@@ -257,6 +257,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             run(false, &hw_pkgs, Some(
             &["--features", "pddb/ci", "--features", "pddb/deterministic"]
         ))?},
+        Some("run-dalek") => {
+            generate_app_menus(&Vec::<String>::new());
+            run(false, &hw_pkgs, Some(
+            &["--features", "curve25519-dalek/u32_backend"]
+        ))?},
         Some("run") => {
             let mut args = env::args();
             args.nth(1);
