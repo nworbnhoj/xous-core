@@ -1,5 +1,6 @@
 #![cfg_attr(target_os = "none", no_std)]
 #![cfg_attr(target_os = "none", no_main)]
+// #![feature(curve25519-dalek/u32_backend)]
 
 mod signal;
 use signal::*;

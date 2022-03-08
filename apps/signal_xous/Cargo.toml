@@ -5,6 +5,7 @@ authors = ["john <john@nhoj.info>"]
 edition = "2021"
 description = "Signal app"
 
+
 # Dependency policy: fully specify dependencies to the minor version number
 [dependencies]
 log = "0.4.14"
@@ -27,11 +28,9 @@ llio = {path = "../../services/llio"}
 codec = {path = "../../services/codec"}
 
 regex = "1.5.4"
-thiserror = { version = "^1.0.30", default-features = false }
+thiserror = { version = "1.0.30" }
 presage = { git = "https://github.com/whisperfish/presage" }
 
 
 [features]
 default = []
-
-

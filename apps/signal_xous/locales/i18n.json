@@ -6,5 +6,13 @@
     "signal.register.help": {
         "en": "register +1234567890",
         "en-audio": "register then phone number in E.164 format."
+    },
+    "signal.link_device.submitted": {
+        "en": "Link device submitted.",
+        "en-audio": "Link Device submitted."
+    },
+    "signal.link_device.help": {
+        "en": "linkdevice [name]",
+        "en-audio": "linkdevice then optionally name"
     }
 }
