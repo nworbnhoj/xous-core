@@ -80,6 +80,7 @@ impl CommonEnv {
 ///// 1. add your module here, and pull its namespace into the local crate
 mod register;  use register::*;
 mod link_device; use link_device::*;
+mod verify;  use verify::*;
 
 pub struct CmdEnv {
     common_env: CommonEnv,
@@ -87,6 +88,7 @@ pub struct CmdEnv {
     ///// 2. declare storage for your command here.
     register_cmd: Register,
     link_device_cmd: LinkDevice,
+    verify_cmd: Verify,
 }
 impl CmdEnv {
     pub fn new(xns: &xous_names::XousNames) -> CmdEnv {
@@ -109,6 +111,7 @@ impl CmdEnv {
             ///// 3. initialize your storage, by calling new()
             register_cmd: Register::new(&xns),
             link_device_cmd: LinkDevice::new(&xns),
+            verify_cmd: Verify::new(&xns),
         }
     }
 
@@ -119,6 +122,7 @@ impl CmdEnv {
             ///// 4. add your command to this array, so that it can be looked up and dispatched
             &mut self.register_cmd,
             &mut self.link_device_cmd,
+            &mut self.verify,
         ];
 
         if let Some(cmdline) = maybe_cmdline {

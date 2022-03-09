@@ -15,4 +15,12 @@
         "en": "linkdevice [name]",
         "en-audio": "linkdevice then optionally name"
     }
+    "signal.verify.submitted": {
+        "en": "verification code submitted.",
+        "en-audio": "Verification code submitted."
+    },
+    "signal.link_device.help": {
+        "en": "verify confirmation_code",
+        "en-audio": "verify then confirmation code"
+    }
 }
