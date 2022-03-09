@@ -37,6 +37,7 @@ default-members = [
   "services/modals",
   "apps/ball",
   "apps/repl",
+  "apps/signal_xous",
 ]
 members = [
   "xous-ipc",
@@ -88,6 +89,7 @@ members = [
   "services/modals",
   "apps/ball",
   "apps/repl",
+  "apps/signal_xous",
   "services/libstd-test",
   "services/ffi-test",
   "services/tts",
@@ -129,7 +131,6 @@ path = "services/xous-names"
 git="https://github.com/betrusted-io/curve25519-dalek.git"
 branch="main"
 #path = "../curve25519-dalek"  # when doing local dev work
-# feature overrides are specified at the crate level
 
 [patch."https://github.com/betrusted-io/xous-engine-25519.git"]
 engine-25519 = {path = "services/engine-25519"}
