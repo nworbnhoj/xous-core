@@ -2,12 +2,14 @@ pub(crate) const SERVER_NAME_TTS: &str     = "_Text to speech front end_";
 
 #[derive(num_derive::FromPrimitive, num_derive::ToPrimitive, Debug)]
 pub(crate) enum Opcode {
-    /// Basic, synchronous, non-abortable conversion of a string to audible speech
+    /// Basic, interruptable conversion of a string to audible speech
     TextToSpeech,
-    /// Callback for the codec crate
-    CodecCb,
+    /// Non-interruptable conversion of a string to audible speech. Blocks until the phrase is finished.
+    TextToSpeechBlocking,
     /// Stops audio playback immediately. Does not stop wave generation.
     CodecStop,
+    /// Set words per minute
+    SetWordsPerMinute,
     /// Exits the server
     Quit,
 }
