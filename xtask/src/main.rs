@@ -314,6 +314,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             run(false, &hw_pkgs, Some(
             &["--features", "pddb/ci", "--features", "pddb/deterministic"]
         ))?},
+        Some("signal") => {
+            let mut pkgs = hw_pkgs.to_vec();
+            let signal = "signal_xous".to_string();
+            pkgs.push(&signal);
+            generate_app_menus(&vec!["signal-xous".to_string()]);
+            run(false, &pkgs, Some(&["--features", "u32_backend"])
+        )?},
         Some("run") => {
             let mut args = env::args();
             args.nth(1);
