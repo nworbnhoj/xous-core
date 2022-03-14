@@ -25,6 +25,10 @@ content-plugin-api = {path = "../../services/content-plugin-api"} # all content 
 com = {path = "../../services/com"}
 llio = {path = "../../services/llio"}
 codec = {path = "../../services/codec"}
+presage = { git = "https://github.com/whisperfish/presage" }
+
+
+
 
 [features]
 default = []
