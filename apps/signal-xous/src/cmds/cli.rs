@@ -4,7 +4,7 @@ use anyhow::{bail, Context as _};
 use directories::ProjectDirs;
 use env_logger::Env;
 use futures::{pin_mut, StreamExt};
-use libsignal_service::{models::Contact, prelude::Contacts, ServiceAddress};
+use libsignal_service::{models::Contact, prelude::ServiceAddress};
 use log::debug;
 use presage::{
     prelude::{
@@ -20,17 +20,33 @@ use presage::{
 use structopt::StructOpt;
 use url::Url;
 
+use crate::{ShellCmdApi,CommonEnv};
+use xous_ipc::String;
+use xous::{MessageEnvelope, Message};
+
 
 #[derive(Debug)]
 pub struct Cli {
-
+    callback_id: Option<u32>,
+    callback_conn: u32,
 }
 impl Cli {
     pub fn new(xns: &xous_names::XousNames) -> Self {
         let callback_conn = xns.request_connection_blocking(crate::SERVER_NAME_SIGNAL).unwrap();
         Cli {
-            
+            callback_id: None,
+            callback_conn,            
         }
+    }
+}
+
+impl<'a> ShellCmdApi<'a> for Cli {
+    cmd_api!(cli);
+    
+    fn process(&mut self, args: String::<1024>, env: &mut CommonEnv) -> Result<Option<String::<1024>>, xous::Error> {
+        let mut ret = String::<1024>::new();
+        log::info!("callback unhandled message {:?}", ret);
+        Ok(None)
     }
 }
 
