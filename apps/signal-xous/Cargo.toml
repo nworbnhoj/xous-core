@@ -25,10 +25,19 @@ content-plugin-api = {path = "../../services/content-plugin-api"} # all content 
 com = {path = "../../services/com"}
 llio = {path = "../../services/llio"}
 codec = {path = "../../services/codec"}
-presage = { git = "https://github.com/whisperfish/presage" }
+
+[dependencies.presage]
+#git = "https://github.com/whisperfish/presage"
+default-features = false
+features = ["sled-store"] 
+path = "../../../whisperfish/presage"
+# TODO revert to official repos when the u32_backend re-export is complete
+# https://github.com/signalapp/libsignal-client/issues/453
 
 
+ [features]
+-default = []
+default = [ "u32_backend" ]
+u32_backend = [ "presage/u32_backend" ]
+u64_backend = [ "presage/u64_backend" ]
 
-
-[features]
-default = []
