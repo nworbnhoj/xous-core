@@ -131,7 +131,6 @@ path = "services/xous-names"
 git="https://github.com/betrusted-io/curve25519-dalek.git"
 branch="main"
 #path = "../curve25519-dalek"  # when doing local dev work
-# feature overrides are specified at the crate level
 
 [patch."https://github.com/betrusted-io/xous-engine-25519.git"]
 engine-25519 = {path = "services/engine-25519"}
