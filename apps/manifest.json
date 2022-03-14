@@ -20,5 +20,14 @@
                 "en-tts": "Basic REPL demo"
             }
         }
-    }
+    },
+    "signal_xous": {
+        "context_name": "Signal",
+        "menu_name": {
+            "appmenu.signal_xous": {
+                "en": "Signal",
+                "en-audio": "Signal"
+            }
+        }
+     }
 }

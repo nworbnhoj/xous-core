@@ -37,6 +37,7 @@ default-members = [
   "services/modals",
   "apps/ball",
   "apps/repl",
+  "apps/signal-xous",
 ]
 members = [
   "xous-ipc",
