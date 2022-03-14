@@ -21,10 +21,10 @@
             }
         }
     },
-    "signal_xous": {
+    "signal": {
         "context_name": "Signal",
         "menu_name": {
-            "appmenu.signal_xous": {
+            "appmenu.signal": {
                 "en": "Signal",
                 "en-audio": "Signal"
             }

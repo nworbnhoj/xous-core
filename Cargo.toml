@@ -90,6 +90,7 @@ members = [
   "services/modals",
   "apps/ball",
   "apps/repl",
+  "apps/signal-xous",
   "services/libstd-test",
   "services/ffi-test",
   "services/tts",

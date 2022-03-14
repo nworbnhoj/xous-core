@@ -1,9 +1,9 @@
 [package]
-name = "repl"
-version = "0.1.0"
-authors = ["bunnie <bunnie@kosagi.com>"]
+name = "signal-xous"
+version = "0.0.0"
+authors = ["john <john@nhoj.info>"]
 edition = "2018"
-description = "REPL demo app"
+description = "Signal Messenger App"
 
 # Dependency policy: fully specify dependencies to the minor version number
 [dependencies]
@@ -35,8 +35,7 @@ path = "../../../whisperfish/presage"
 # https://github.com/signalapp/libsignal-client/issues/453
 
 
- [features]
--default = []
+[features]
 default = [ "u32_backend" ]
 u32_backend = [ "presage/u32_backend" ]
 u64_backend = [ "presage/u64_backend" ]

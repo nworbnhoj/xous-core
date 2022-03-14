@@ -316,9 +316,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ))?},
         Some("signal") => {
             let mut pkgs = hw_pkgs.to_vec();
-            let signal = "signal_xous".to_string();
+            let signal = "signal".to_string();
             pkgs.push(&signal);
-            generate_app_menus(&vec!["signal-xous".to_string()]);
+            generate_app_menus(&vec!["signal".to_string()]);
             run(false, &pkgs, Some(&["--features", "u32_backend"])
         )?},
         Some("run") => {

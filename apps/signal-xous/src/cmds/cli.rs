@@ -20,6 +20,21 @@ use presage::{
 use structopt::StructOpt;
 use url::Url;
 
+
+#[derive(Debug)]
+pub struct Cli {
+
+}
+impl Cli {
+    pub fn new(xns: &xous_names::XousNames) -> Self {
+        let callback_conn = xns.request_connection_blocking(crate::SERVER_NAME_SIGNAL).unwrap();
+        Cli {
+            
+        }
+    }
+}
+
+
 #[derive(StructOpt)]
 #[structopt(about = "a basic signal CLI to try things out")]
 struct Args {
