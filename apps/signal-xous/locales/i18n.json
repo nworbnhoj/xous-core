@@ -1,32 +1,26 @@
 {
-    "replapp.greeting": {
-        "en": "Welcome to the simple REPL demo.",
-        "ja": "シンプルなREPLデモへようこそ",
-        "zh": "简单的 repl 演示活动",
-        "en-tts": "Welcome to the simple REPL demo."
+    "signal.register.help": {
+        "en": "Register a new phone number with Signal",
+        "en-tts": "Register a new phone number with Signal"
     },
-    "replapp.audio.start": {
-        "en": "tone started...",
-        "ja": "トーン開始…",
-        "zh": "哔声开始...",
-        "en-tts": "tone started..."
+    "signal.register.phone_number": {
+        "en": "phone number",
+        "en-tts": "phone number"
     },
-    "replapp.audio.help": {
-        "en": "audio [tone [freq [duration]]]",
-        "ja": "オーディオ [ トーン [ 周波数 [ 間隔 ]]]",
-        "zh": "audio [tone [音频 [时长]]]",
-        "en-tts": "audio tone, then optional frequency plus optional duration."
+    "signal.register.submitted": {
+        "en": "registration submitted",
+        "en-tts": "registration submitted"
     },
-    "replapp.audio.completion_a": {
-        "en": "Playback stopped at",
-        "ja": "再生停止位置: ",
-        "zh": "播放停止在",
-        "en-tts": "Playback stopped at"
+    "signal.register.phone.modal.name": {
+        "en": "Phone Number",
+        "en-tts": "phone number"
     },
-    "replapp.audio.completion_b": {
-        "en": "frames",
-        "ja": "フレーム",
-        "zh": "帧",
-        "en-tts": "frames"
+    "signal.register.phone.modal.top": {
+        "en": "The telephone number to register with the Signal servers",
+        "en-tts": "The telephone number to register with the Signal servers"
+    },
+    "signal.register.phone.modal.bottom": {
+        "en": "In E.164 format (+61123457890)",
+        "en-tts": "In E.164 format, for example +61123457890"
     }
 }

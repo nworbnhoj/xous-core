@@ -1,8 +1,13 @@
+use core::fmt::Write;
+use directories::ProjectDirs;
+use log::debug;
+use presage::{Manager, SledConfigStore, };
+use std::path::PathBuf;
+use std::collections::HashMap;
 use xous::{MessageEnvelope};
 use xous_ipc::String;
-use core::fmt::Write;
 
-use std::collections::HashMap;
+
 /////////////////////////// Common items to all commands
 pub trait ShellCmdApi<'a> {
     // user implemented:
@@ -38,17 +43,17 @@ macro_rules! cmd_api {
 
 use trng::*;
 /////////////////////////// Command shell integration
-#[derive(Debug)]
-#[allow(dead_code)] // there's more in the envornment right now than we need for the demo
+//#[derive(Debug)]
+
 pub struct CommonEnv {
     llio: llio::Llio,
     com: com::Com,
     codec: codec::Codec,
-    ticktimer: ticktimer_server::Ticktimer,
     gam: gam::Gam,
     cb_registrations: HashMap::<u32, String::<256>>,
     trng: Trng,
     xns: xous_names::XousNames,
+    manager: Manager<SledConfigStore>,
 }
 impl CommonEnv {
     pub fn register_handler(&mut self, verb: String::<256>) -> u32 {
@@ -79,26 +84,37 @@ impl CommonEnv {
 
 ///// 1. add your module here, and pull its namespace into the local crate
 mod cli;     use cli::*;
+mod register; use register::*;
 
 pub struct CmdEnv {
     common_env: CommonEnv,
     lastverb: String::<256>,
     ///// 2. declare storage for your command here.
     cli_cmd: Cli,
+    register_cmd: Register,
 }
 impl CmdEnv {
     pub fn new(xns: &xous_names::XousNames) -> CmdEnv {
         let ticktimer = ticktimer_server::Ticktimer::new().expect("Couldn't connect to Ticktimer");
         log::info!("creating CommonEnv");
+        
+        let db_path: PathBuf = ProjectDirs::from("org", "betrusted", "xous")
+            .unwrap()
+            .config_dir()
+            .into();
+        debug!("opening config database from {}", db_path.display());
+        let config_store = SledConfigStore::new(db_path).expect("failed to construct Presage SledConfigStore");
+        let csprng = rand::thread_rng();
+        
         let common = CommonEnv {
             llio: llio::Llio::new(&xns),
             com: com::Com::new(&xns).expect("could't connect to COM"),
             codec: codec::Codec::new(&xns).expect("couldn't connect to CODEC"),
-            ticktimer,
             gam: gam::Gam::new(&xns).expect("couldn't connect to GAM"),
             cb_registrations: HashMap::new(),
             trng: Trng::new(&xns).unwrap(),
             xns: xous_names::XousNames::new().unwrap(),
+            manager: Manager::new(config_store, csprng).expect("failed to construct Presage Manager"),
         };
         log::info!("done creating CommonEnv");
         CmdEnv {
@@ -106,6 +122,7 @@ impl CmdEnv {
             lastverb: String::<256>::new(),
             ///// 3. initialize your storage, by calling new()
             cli_cmd: Cli::new(&xns),
+            register_cmd: Register::new(&xns),
         }
     }
 
@@ -115,6 +132,7 @@ impl CmdEnv {
         let commands: &mut [& mut dyn ShellCmdApi] = &mut [
             ///// 4. add your command to this array, so that it can be looked up and dispatched
             &mut self.cli_cmd,
+            &mut self.register_cmd,
         ];
 
         if let Some(cmdline) = maybe_cmdline {
@@ -217,3 +235,5 @@ pub fn tokenize(line: &mut String::<1024>) -> Option<String::<1024>> {
         None
     }
 }
+
+
