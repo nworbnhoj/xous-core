@@ -1,7 +1,8 @@
 use crate::{ShellCmdApi,CommonEnv};
 use core::fmt::Write;
 use locales::t;
-use presage::prelude::{phonenumber::PhoneNumber, SignalServers};
+use libsignal_service::prelude::phonenumber::PhoneNumber;
+use libsignal_service::configuration::SignalServers;
 
 use url::Url;
 

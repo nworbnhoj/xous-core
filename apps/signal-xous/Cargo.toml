@@ -27,7 +27,6 @@ llio = {path = "../../services/llio"}
 codec = {path = "../../services/codec"}
 
 
-async-trait = "0.1"
 base64 = "0.12"
 serde = "1.0"
 thiserror = "1.0"
@@ -38,26 +37,14 @@ qr2term = "0.2.2"
 anyhow = "1.0.56"
 directories =  "4.0.1"
 env_logger = "0.9.0"
-futures = "0.3.21"
 hex = "0.4.3"
 rand = "0.7"
 serde_json = "1.0"
-structopt = "0.3.26"
-tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
 url = "2.2.2"
 
 regex = "1.5.5"
 
 
-
-
-[dependencies.presage]
-#git = "https://github.com/whisperfish/presage"
-default-features = false
-features = ["sled-store"] 
-path = "../../../whisperfish/presage"
-# TODO revert to official repos when the u32_backend re-export is complete
-# https://github.com/signalapp/libsignal-client/issues/453
 
 [dependencies.libsignal-service]
 #git = "https://github.com/whisperfish/libsignal-service-rs/libsignal-service"
@@ -66,17 +53,10 @@ path = "../../../whisperfish/libsignal-service-rs/libsignal-service"
 # TODO revert to official repos when the u32_backend re-export is complete
 # https://github.com/signalapp/libsignal-client/issues/453
 
-[dependencies.libsignal-service-hyper]
-#git = "https://github.com/whisperfish/libsignal-service-rs/libsignal-service-hyper"
-default-features = false
-path = "../../../whisperfish/libsignal-service-rs/libsignal-service-hyper"
-# TODO revert to official repos when the u32_backend re-export is complete
-# https://github.com/signalapp/libsignal-client/issues/453
-
 
 
 [features]
 default = [ "u32_backend" ]
-u32_backend = [ "presage/u32_backend" ]
-u64_backend = [ "presage/u64_backend" ]
+u32_backend = [ "libsignal-service/u32_backend" ]
+u64_backend = [ "libsignal-service/u64_backend" ]
 
