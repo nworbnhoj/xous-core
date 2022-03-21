@@ -10,10 +10,13 @@ description = "Xous Websocket service"
 [dependencies]
 xous = { path = "../../xous-rs" }
 log-server = { path = "../log-server" }
+ticktimer-server = { path = "../ticktimer-server" }
 xous-names = { path = "../xous-names" }
 log = "0.4.14"
 num-derive = {version = "0.3.3", default-features = false}
 num-traits = {version = "0.2.14", default-features = false}
+embedded-websocket = "0.8.0"
+libsignal-services = { path = "../../../whisperfish/libsignal-service-rs/libsignal-service" }
 
 [target.'cfg(not(any(windows,unix)))'.dependencies]
 utralib = { path = "../../utralib"}
