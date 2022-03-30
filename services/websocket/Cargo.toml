@@ -5,8 +5,7 @@ authors = ["nhoj <john@nhoj.info>"]
 edition = "2018"
 description = "Xous Websocket service"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
+# Dependency policy: fully specify dependencies to the minor version number
 [dependencies]
 xous = { path = "../../xous-rs" }
 log-server = { path = "../log-server" }
@@ -15,8 +14,19 @@ xous-names = { path = "../xous-names" }
 log = "0.4.14"
 num-derive = {version = "0.3.3", default-features = false}
 num-traits = {version = "0.2.14", default-features = false}
-embedded-websocket = "0.8.0"
-libsignal-services = { path = "../../../whisperfish/libsignal-service-rs/libsignal-service" }
+#embedded-websocket = { version = "0.8.0", default-features = false }
+embedded-websocket = { version = "0.8.0" }
+xous-ipc = {path="../../xous-ipc"}
+url = "2.2.2"
+libsignal-service = { path = "../../../whisperfish/libsignal-service-rs/libsignal-service" }
+rustls = "0.20.4"
+rustls-connector = "0.16.1"
+rand = "0.8.5"
+rand_core = "0.6.3"
+rkyv = {version = "0.4.3", default-features = false, features = ["const_generics"]}
+rustls-pemfile = "0.3.0"
+derive_deref = "1.1.1"
+
 
 [target.'cfg(not(any(windows,unix)))'.dependencies]
 utralib = { path = "../../utralib"}
