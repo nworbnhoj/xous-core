@@ -205,7 +205,10 @@ fn xmain() -> ! {
                     &frame_buf,
                 ) {
                     Ok(()) => log::info!("Websocket keep-alive request sent"),
-                    Err(e) => log::info!("failed to send Websocket keep-alive request {:?}", e),
+                    Err(e) => {
+                       log::info!("failed to send Websocket keep-alive request {:?}", e);
+                       break;
+                    },
                 };
 
                 log::info!("Websocket keep-alive request sent");
