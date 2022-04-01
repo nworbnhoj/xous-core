@@ -188,6 +188,34 @@ fn xmain() -> ! {
                 // Store the open websocket indexed by the calling pid
                 streams.insert(pid, wss_stream);
             }
+            Some(Opcode::Send) => xous::msg_scalar_unpack!(msg, msg_type, _, _, _, {
+                let pid = msg.sender.pid().unwrap();
+                let stream = match streams.get_mut(&pid) {
+                    Some(stream) => stream,
+                    None => {
+                        log::info!("Websocket stream not in list");
+                        break;
+                    }
+                };
+                let ws_msg_type = match msg_type {
+                    Text => WebSocketSendMessageType::Text,
+                    Binary => WebSocketSendMessageType::Binary,
+                    invalid => {
+                        log::info!("Invalid value SendMessageType: {:?}", invalid);
+                        break;
+                    }
+                };
+                let frame_buf = unsafe {
+                    Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap())
+                };
+                match framer.write(&mut *stream, ws_msg_type, true, &frame_buf) {
+                    Ok(()) => log::info!("Websocket frame sent"),
+                    Err(e) => {
+                        log::info!("failed to send Websocket frame {:?}", e);
+                        break;
+                    }
+                };
+            }),
             Some(Opcode::Tick) => {
                 let pid = msg.sender.pid().unwrap();
                 let stream = match streams.get_mut(&pid) {
@@ -206,9 +234,9 @@ fn xmain() -> ! {
                 ) {
                     Ok(()) => log::info!("Websocket keep-alive request sent"),
                     Err(e) => {
-                       log::info!("failed to send Websocket keep-alive request {:?}", e);
-                       break;
-                    },
+                        log::info!("failed to send Websocket keep-alive request {:?}", e);
+                        break;
+                    }
                 };
 
                 log::info!("Websocket keep-alive request sent");

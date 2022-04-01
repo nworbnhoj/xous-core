@@ -1,6 +1,7 @@
 #[allow(dead_code)]
 pub(crate) const SERVER_NAME_WEBSOCKET: &str = "_Websocket Service_";
 
+use embedded_websocket::WebSocketSendMessageType;
 use std::time::Duration;
 
 pub(crate) const KEEPALIVE_TIMEOUT_SECONDS: Duration = Duration::from_secs(55);
@@ -26,10 +27,19 @@ pub(crate) enum Opcode {
     Close = 1,
     /// open a new websocket
     Open,
+    /// send a websocket frame
+    Send,
     /// send a KeepAliveRequest
     Tick,
     /// Close Websocket and shutdown server
     Quit,
+}
+
+// Subset of use embedded_websocket::WebSocketSendMessageType
+#[derive(num_derive::FromPrimitive, num_derive::ToPrimitive, Debug)]
+pub enum SendMessageType {
+    Text,
+    Binary,
 }
 
 // a structure for defining the setup of a Websocket.
