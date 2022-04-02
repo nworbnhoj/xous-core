@@ -20,7 +20,10 @@ use std::{
     thread,
 };
 use url::Url;
+use xous::CID;
 use xous_ipc::Buffer;
+
+const LISTENER_POLL_INTERVAL_MS: usize = 250;
 
 struct WssStream<T: Read + Write>(T);
 
@@ -37,6 +40,21 @@ impl<T: Read + Write> embedded_websocket::framer::Stream<Error> for WssStream<T>
 struct Assets<R: rand::RngCore, T: Read + Write> {
     socket: WebSocketClient<R>,
     stream: WssStream<T>,
+    cid: CID,
+    opcode: u32,
+}
+
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+struct Frame {
+    buffer: [u8; WEBSOCKET_BUFFER_LEN],
+}
+
+impl Frame {
+    pub fn new(buf: &[u8]) -> Self {
+        Self {
+            buffer: buf.try_into().expect("buffer of incorrect length"),
+        }
+    }
 }
 
 #[xous::xous_main]
@@ -78,11 +96,12 @@ fn xmain() -> ! {
     These buffers can be allocated here before the main loop, or alternatvely alocated and
     de-allocated within the loop as required ( presumably, trading memory with performance )
     TODO review/test/optimise buffer allocation
+    TODO review need to zero buffer before reuse (if allocating shared buffers here)
     */
     let mut read_buf = [0; WEBSOCKET_BUFFER_LEN];
     let mut read_cursor = 0;
     let mut write_buf = [0; WEBSOCKET_BUFFER_LEN];
-    let mut _frame_buf = [0; WEBSOCKET_BUFFER_LEN];
+    let mut frame_buf = [0; WEBSOCKET_BUFFER_LEN];
     let mut _read_buf = [0; WEBSOCKET_BUFFER_LEN];
 
     /*
@@ -92,6 +111,8 @@ fn xmain() -> ! {
 
     let mut store: HashMap<NonZeroU8, Assets<ThreadRng, StreamOwned<ClientConnection, TcpStream>>> =
         HashMap::new();
+
+    let ticktimer = ticktimer_server::Ticktimer::new().unwrap();
 
     log::trace!("ready to accept requests");
     loop {
@@ -114,7 +135,7 @@ fn xmain() -> ! {
                     Err(e) => log::info!("Failed to send close handshake {:?}", e),
                 };
             }
-            Some(Opcode::Open) => {
+            Some(Opcode::Open) => xous::msg_scalar_unpack!(msg, cid, opcode, _, _, {
                 let pid = msg.sender.pid().unwrap();
                 if store.contains_key(&pid) {
                     log::info!("WebSocket already open for pid: {:?}", pid);
@@ -206,9 +227,12 @@ fn xmain() -> ! {
                     Assets {
                         stream: wss_stream,
                         socket: ws_client,
+                        // TODO DANGER review conversion usize as u32
+                        cid: cid as u32,
+                        opcode: opcode as u32,
                     },
                 );
-            }
+            }),
             Some(Opcode::Send) => xous::msg_scalar_unpack!(msg, msg_type, _, _, _, {
                 let pid = msg.sender.pid().unwrap();
                 let (socket, stream) = match store.get_mut(&pid) {
@@ -250,6 +274,7 @@ fn xmain() -> ! {
                         break;
                     }
                 };
+                // TODO review keep alive request technique
                 let frame_buf = "keep alive please :-)".as_bytes();
 
                 let mut framer =
@@ -274,6 +299,30 @@ fn xmain() -> ! {
                 log::error!("couldn't convert opcode: {:?}", msg);
             }
         }
+
+        /*
+        Check each websocket for an inbound frame to read and send to the cid
+        */
+        for (_pid, assets) in &mut store {
+            let mut framer = Framer::new(
+                &mut read_buf,
+                &mut read_cursor,
+                &mut write_buf,
+                &mut assets.socket,
+            );
+
+            while let Some(frame) = framer
+                .read_binary(&mut assets.stream, &mut frame_buf)
+                .expect("failed to read websocket")
+            {
+                let frame = Frame::new(frame);
+                let buf = Buffer::into_buf(frame).expect("failed to import websocket frame");
+                buf.send(assets.cid, assets.opcode)
+                    .expect("failed to send websocket frame");
+            }
+        }
+
+        ticktimer.sleep_ms(LISTENER_POLL_INTERVAL_MS).unwrap();
     }
     // clean up our program
     log::trace!("main loop exit, destroying servers");

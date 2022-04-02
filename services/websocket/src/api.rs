@@ -17,7 +17,7 @@ pub(crate) const PASSWORD_LEN: usize = 128;
  Also: there may be advantage in independently specifying the read, frame, and write buffer sizes.
  TODO review/test/optimise WEBSOCKET_BUFFER_LEN
 */
-pub(crate) const WEBSOCKET_BUFFER_LEN: usize = 4000;
+pub(crate) const WEBSOCKET_BUFFER_LEN: usize = 4096;
 
 /// These opcodes can be called by anyone at any time
 #[derive(num_derive::FromPrimitive, num_derive::ToPrimitive, Debug)]
