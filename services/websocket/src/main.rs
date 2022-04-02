@@ -99,7 +99,7 @@ fn xmain() -> ! {
         match FromPrimitive::from_usize(msg.body.id()) {
             Some(Opcode::Close) => {
                 let pid = msg.sender.pid().unwrap();
-                let (mut socket, mut stream) = match store.get_mut(&pid) {
+                let (socket, stream) = match store.get_mut(&pid) {
                     Some(assets) => (&mut assets.socket, &mut assets.stream),
                     None => {
                         log::info!("Websocket assets not in list");
@@ -107,7 +107,7 @@ fn xmain() -> ! {
                     }
                 };
                 let mut framer =
-                    Framer::new(&mut read_buf, &mut read_cursor, &mut write_buf, &mut socket);
+                    Framer::new(&mut read_buf, &mut read_cursor, &mut write_buf, socket);
 
                 match framer.close(stream, WebSocketCloseStatusCode::NormalClosure, None) {
                     Ok(()) => log::info!("Sent close handshake"),
@@ -181,13 +181,13 @@ fn xmain() -> ! {
                 };
                 let mut wss_stream = WssStream(tls_stream);
 
-                let mut websocket_client = WebSocketClient::new_client(rand::thread_rng());
+                let mut ws_client = WebSocketClient::new_client(rand::thread_rng());
 
                 let mut framer = Framer::new(
                     &mut read_buf,
                     &mut read_cursor,
                     &mut write_buf,
-                    &mut websocket_client,
+                    &mut ws_client,
                 );
 
                 let sub_protocol = match framer.connect(&mut wss_stream, &websocket_options) {
@@ -205,22 +205,22 @@ fn xmain() -> ! {
                     pid,
                     Assets {
                         stream: wss_stream,
-                        socket: websocket_client,
+                        socket: ws_client,
                     },
                 );
             }
             Some(Opcode::Send) => xous::msg_scalar_unpack!(msg, msg_type, _, _, _, {
                 let pid = msg.sender.pid().unwrap();
-                let (mut socket, mut stream) = match store.get_mut(&pid) {
+                let (socket, stream) = match store.get_mut(&pid) {
                     Some(assets) => (&mut assets.socket, &mut assets.stream),
                     None => {
                         log::info!("Websocket assets not in list");
                         break;
                     }
                 };
-                let ws_msg_type = match msg_type {
-                    Text => WebSocketSendMessageType::Text,
-                    Binary => WebSocketSendMessageType::Binary,
+                let ws_msg_type = match FromPrimitive::from_usize(msg_type) {
+                    Some(SendMessageType::Text) => WebSocketSendMessageType::Text,
+                    Some(SendMessageType::Binary) => WebSocketSendMessageType::Binary,
                     invalid => {
                         log::info!("Invalid value SendMessageType: {:?}", invalid);
                         break;
@@ -231,7 +231,7 @@ fn xmain() -> ! {
                 };
 
                 let mut framer =
-                    Framer::new(&mut read_buf, &mut read_cursor, &mut write_buf, &mut socket);
+                    Framer::new(&mut read_buf, &mut read_cursor, &mut write_buf, socket);
 
                 match framer.write(stream, ws_msg_type, true, &frame_buf) {
                     Ok(()) => log::info!("Websocket frame sent"),
@@ -243,7 +243,7 @@ fn xmain() -> ! {
             }),
             Some(Opcode::Tick) => {
                 let pid = msg.sender.pid().unwrap();
-                let (mut socket, mut stream) = match store.get_mut(&pid) {
+                let (socket, stream) = match store.get_mut(&pid) {
                     Some(assets) => (&mut assets.socket, &mut assets.stream),
                     None => {
                         log::info!("Websocket assets not in list");
@@ -253,7 +253,7 @@ fn xmain() -> ! {
                 let frame_buf = "keep alive please :-)".as_bytes();
 
                 let mut framer =
-                    Framer::new(&mut read_buf, &mut read_cursor, &mut write_buf, &mut socket);
+                    Framer::new(&mut read_buf, &mut read_cursor, &mut write_buf, socket);
 
                 match framer.write(stream, WebSocketSendMessageType::Text, true, &frame_buf) {
                     Ok(()) => log::info!("Websocket keep-alive request sent"),

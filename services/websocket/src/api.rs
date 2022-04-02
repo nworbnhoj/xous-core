@@ -1,7 +1,6 @@
 #[allow(dead_code)]
 pub(crate) const SERVER_NAME_WEBSOCKET: &str = "_Websocket Service_";
 
-use embedded_websocket::WebSocketSendMessageType;
 use std::time::Duration;
 
 pub(crate) const KEEPALIVE_TIMEOUT_SECONDS: Duration = Duration::from_secs(55);
