@@ -179,8 +179,8 @@ fn xmain() -> ! {
                 log::info!("TCP connected to {:?}", base_url);
 
                 // Create a TLS connection to the remote Server on the TCP Stream
-                // TODO pass ssl_config in during Opcode::Open ie ::from(ws_config.ssl_config);
-                let tls_connector = RustlsConnector::from(local_ssl_config());
+                let ca = ws_config.certificate_authority.as_str().expect("certificate_authority utf-8 decode error");
+                let tls_connector = RustlsConnector::from(ssl_config(ca));
                 let tls_stream = match tls_connector.connect(base_url, tcp_stream) {
                     Ok(stream) => {
                         log::info!("TLS connected to {:?}", base_url);
@@ -332,15 +332,10 @@ fn xmain() -> ! {
     xous::terminate_process(0)
 }
 
-// TODO pass ssl_config in during Opcode::Open ie ::from(ws_config.ssl_config);
-// this is temporary Signal specific code below
 
-use libsignal_service::configuration::{ServiceConfiguration, SignalServers};
 
-fn local_ssl_config() -> rustls::ClientConfig {
-    let cfg: ServiceConfiguration = SignalServers::Staging.into();
-    //    let user_agent = "xous".to_string();
-    let mut cert_bytes = std::io::Cursor::new(&cfg.certificate_authority);
+fn ssl_config(certificate_authority: &str) -> rustls::ClientConfig {
+    let mut cert_bytes = std::io::Cursor::new(&certificate_authority);
     let roots = rustls_pemfile::certs(&mut cert_bytes).expect("parseable PEM files");
     let roots = roots.iter().map(|v| rustls::Certificate(v.clone()));
 

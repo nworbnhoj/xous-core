@@ -6,6 +6,7 @@ use std::time::Duration;
 pub(crate) const KEEPALIVE_TIMEOUT_SECONDS: Duration = Duration::from_secs(55);
 pub(crate) const URL_LENGTH_LIMIT: usize = 200;
 
+pub(crate) const CA_LEN: usize = 1402;
 pub(crate) const BASEURL_LEN: usize = 128;
 pub(crate) const PATH_LEN: usize = 128;
 pub(crate) const LOGIN_LEN: usize = 128;
@@ -44,7 +45,7 @@ pub enum SendMessageType {
 // a structure for defining the setup of a Websocket.
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct WebsocketConfig {
-    //    pub tls_config: rustls::ClientConfig,   // requires manual implementation of Archive....
+    pub certificate_authority: xous_ipc::String<CA_LEN>,
     pub base_url: xous_ipc::String<BASEURL_LEN>,
     pub path: xous_ipc::String<PATH_LEN>,
     pub use_credentials: bool,
