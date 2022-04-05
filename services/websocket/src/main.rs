@@ -68,29 +68,10 @@ fn xmain() -> ! {
         .register_name(api::SERVER_NAME_WEBSOCKET, None)
         .expect("can't register server");
     log::trace!("registered with NS -- {:?}", ws_sid);
+    let ws_cid = xous::connect(ws_sid).unwrap();
 
     // build a thread that emits a regular WebSocketOp::Tick to send a KeepAliveRequest
-    thread::spawn({
-        let local_cid = xous::connect(ws_sid).unwrap();
-        move || {
-            let tt = ticktimer_server::Ticktimer::new().unwrap();
-            loop {
-                tt.sleep_ms(KEEPALIVE_TIMEOUT_SECONDS.as_millis().try_into().unwrap())
-                    .unwrap();
-                xous::send_message(
-                    local_cid,
-                    xous::Message::new_scalar(
-                        Opcode::Tick.to_usize().unwrap(),
-                        KEEPALIVE_TIMEOUT_SECONDS.as_secs().try_into().unwrap(),
-                        0,
-                        0,
-                        0,
-                    ),
-                )
-                .expect("couldn't send Websocket tick");
-            }
-        }
-    });
+    spawn_tick_pump(ws_cid);
 
     /*
     These buffers can be allocated here before the main loop, or alternatvely alocated and
@@ -351,6 +332,30 @@ fn xmain() -> ! {
     xous::destroy_server(ws_sid).unwrap();
     log::trace!("quitting");
     xous::terminate_process(0)
+}
+
+// build a thread that emits a regular WebSocketOp::Tick to send a KeepAliveRequest
+fn spawn_tick_pump(cid: CID) {
+    thread::spawn({
+        move || {
+            let tt = ticktimer_server::Ticktimer::new().unwrap();
+            loop {
+                tt.sleep_ms(KEEPALIVE_TIMEOUT_SECONDS.as_millis().try_into().unwrap())
+                    .unwrap();
+                xous::send_message(
+                    cid,
+                    xous::Message::new_scalar(
+                        Opcode::Tick.to_usize().unwrap(),
+                        KEEPALIVE_TIMEOUT_SECONDS.as_secs().try_into().unwrap(),
+                        0,
+                        0,
+                        0,
+                    ),
+                )
+                .expect("couldn't send Websocket tick");
+            }
+        }
+    });
 }
 
 fn drop(hint: &str) -> api::Return {
