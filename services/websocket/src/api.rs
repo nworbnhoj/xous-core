@@ -5,12 +5,15 @@ use std::time::Duration;
 
 pub(crate) const KEEPALIVE_TIMEOUT_SECONDS: Duration = Duration::from_secs(55);
 pub(crate) const URL_LENGTH_LIMIT: usize = 200;
+pub(crate) const HINT_LEN: usize = 128;
 
 pub(crate) const CA_LEN: usize = 1402;
 pub(crate) const BASEURL_LEN: usize = 128;
 pub(crate) const PATH_LEN: usize = 128;
 pub(crate) const LOGIN_LEN: usize = 128;
 pub(crate) const PASSWORD_LEN: usize = 128;
+
+pub(crate) const SUB_PROTOCOL_LEN: usize = 128;
 
 /*
  WEBSOCKET_BUFFER_LEN can be as small as 14bytes, but presumably comes with a performance degradation.
@@ -33,6 +36,12 @@ pub(crate) enum Opcode {
     Tick,
     /// Close Websocket and shutdown server
     Quit,
+}
+
+#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+pub(crate) enum Return {
+    SubProtocol(xous_ipc::String<SUB_PROTOCOL_LEN>),
+    Failure(xous_ipc::String<HINT_LEN>),
 }
 
 // Subset of use embedded_websocket::WebSocketSendMessageType

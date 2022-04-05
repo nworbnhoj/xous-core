@@ -120,11 +120,14 @@ fn xmain() -> ! {
         match FromPrimitive::from_usize(msg.body.id()) {
             Some(Opcode::Close) => {
                 let pid = msg.sender.pid().unwrap();
+                let mut buf = unsafe {
+                    Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap())
+                };
                 let (socket, stream) = match store.get_mut(&pid) {
                     Some(assets) => (&mut assets.socket, &mut assets.stream),
                     None => {
-                        log::info!("Websocket assets not in list");
-                        break;
+                        buf.replace(drop("Websocket assets not in list")).unwrap();
+                        continue;
                     }
                 };
                 let mut framer =
@@ -132,18 +135,22 @@ fn xmain() -> ! {
 
                 match framer.close(stream, WebSocketCloseStatusCode::NormalClosure, None) {
                     Ok(()) => log::info!("Sent close handshake"),
-                    Err(e) => log::info!("Failed to send close handshake {:?}", e),
+                    Err(e) => {
+                        let hint = format!("Failed to send close handshake {:?}", e);
+                        buf.replace(drop(&hint)).unwrap();
+                        continue;
+                    }
                 };
             }
             Some(Opcode::Open) => xous::msg_scalar_unpack!(msg, cid, opcode, _, _, {
                 let pid = msg.sender.pid().unwrap();
-                if store.contains_key(&pid) {
-                    log::info!("WebSocket already open for pid: {:?}", pid);
-                    break;
-                }
-                let buf = unsafe {
+                let mut buf = unsafe {
                     Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap())
                 };
+                if store.contains_key(&pid) {
+                    buf.replace(drop("WebSocket already open")).unwrap();
+                    continue;
+                }
                 let ws_config = buf.to_original::<WebsocketConfig, _>().unwrap();
 
                 let base_url = ws_config
@@ -172,14 +179,18 @@ fn xmain() -> ! {
                 let tcp_stream = match TcpStream::connect(url.as_str()) {
                     Ok(tcp_stream) => tcp_stream,
                     Err(e) => {
-                        log::info!("Failed to open TCP Stream {:?}", e);
-                        break;
+                        let hint = format!("Failed to open TCP Stream {:?}", e);
+                        buf.replace(drop(&hint)).unwrap();
+                        continue;
                     }
                 };
                 log::info!("TCP connected to {:?}", base_url);
 
                 // Create a TLS connection to the remote Server on the TCP Stream
-                let ca = ws_config.certificate_authority.as_str().expect("certificate_authority utf-8 decode error");
+                let ca = ws_config
+                    .certificate_authority
+                    .as_str()
+                    .expect("certificate_authority utf-8 decode error");
                 let tls_connector = RustlsConnector::from(ssl_config(ca));
                 let tls_stream = match tls_connector.connect(base_url, tcp_stream) {
                     Ok(stream) => {
@@ -187,8 +198,9 @@ fn xmain() -> ! {
                         stream
                     }
                     Err(e) => {
-                        log::info!("Failed to complete TLS handshake {:?}", e);
-                        break;
+                        let hint = format!("Failed to complete TLS handshake {:?}", e);
+                        buf.replace(drop(&hint)).unwrap();
+                        continue;
                     }
                 };
 
@@ -211,14 +223,18 @@ fn xmain() -> ! {
                     &mut ws_client,
                 );
 
-                let sub_protocol = match framer.connect(&mut wss_stream, &websocket_options) {
-                    Ok(sub_protocol) => sub_protocol,
-                    Err(e) => {
-                        log::info!("Unable to connect WebSocket {:?}", e);
-                        break;
-                    }
-                };
-                // TODO maybe subprotol should be saved in options??
+                let sub_protocol: xous_ipc::String<HINT_LEN> =
+                    match framer.connect(&mut wss_stream, &websocket_options) {
+                        Ok(opt) => match opt {
+                            Some(sp) => xous_ipc::String::from_str(sp.to_string()),
+                            None => xous_ipc::String::from_str(""),
+                        },
+                        Err(e) => {
+                            let hint = format!("Unable to connect WebSocket {:?}", e);
+                            buf.replace(drop(&hint)).unwrap();
+                            continue;
+                        }
+                    };
                 log::info!("WebSocket connected with: {:?}", sub_protocol);
 
                 // Store the open websocket indexed by the calling pid
@@ -232,36 +248,41 @@ fn xmain() -> ! {
                         opcode: opcode as u32,
                     },
                 );
+
+                let response = api::Return::SubProtocol(sub_protocol);
+                buf.replace(response).unwrap();
             }),
             Some(Opcode::Send) => xous::msg_scalar_unpack!(msg, msg_type, _, _, _, {
                 let pid = msg.sender.pid().unwrap();
+                let mut buf = unsafe {
+                    Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap())
+                };
                 let (socket, stream) = match store.get_mut(&pid) {
                     Some(assets) => (&mut assets.socket, &mut assets.stream),
                     None => {
-                        log::info!("Websocket assets not in list");
-                        break;
+                        buf.replace(drop("Websocket assets not in list")).unwrap();
+                        continue;
                     }
                 };
                 let ws_msg_type = match FromPrimitive::from_usize(msg_type) {
                     Some(SendMessageType::Text) => WebSocketSendMessageType::Text,
                     Some(SendMessageType::Binary) => WebSocketSendMessageType::Binary,
                     invalid => {
-                        log::info!("Invalid value SendMessageType: {:?}", invalid);
-                        break;
+                        let hint = format!("Invalid value SendMessageType: {:?}", invalid);
+                        buf.replace(drop(&hint)).unwrap();
+                        continue;
                     }
-                };
-                let frame_buf = unsafe {
-                    Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap())
                 };
 
                 let mut framer =
                     Framer::new(&mut read_buf, &mut read_cursor, &mut write_buf, socket);
 
-                match framer.write(stream, ws_msg_type, true, &frame_buf) {
+                match framer.write(stream, ws_msg_type, true, &buf) {
                     Ok(()) => log::info!("Websocket frame sent"),
                     Err(e) => {
-                        log::info!("failed to send Websocket frame {:?}", e);
-                        break;
+                        let hint = format!("failed to send Websocket frame {:?}", e);
+                        buf.replace(drop(&hint)).unwrap();
+                        continue;
                     }
                 };
             }),
@@ -271,7 +292,7 @@ fn xmain() -> ! {
                     Some(assets) => (&mut assets.socket, &mut assets.stream),
                     None => {
                         log::info!("Websocket assets not in list");
-                        break;
+                        continue;
                     }
                 };
                 // TODO review keep alive request technique
@@ -284,7 +305,7 @@ fn xmain() -> ! {
                     Ok(()) => log::info!("Websocket keep-alive request sent"),
                     Err(e) => {
                         log::info!("failed to send Websocket keep-alive request {:?}", e);
-                        break;
+                        continue;
                     }
                 };
 
@@ -332,7 +353,10 @@ fn xmain() -> ! {
     xous::terminate_process(0)
 }
 
-
+fn drop(hint: &str) -> api::Return {
+    log::info!("{}", hint);
+    api::Return::Failure(xous_ipc::String::from_str(hint))
+}
 
 fn ssl_config(certificate_authority: &str) -> rustls::ClientConfig {
     let mut cert_bytes = std::io::Cursor::new(&certificate_authority);
