@@ -23,8 +23,6 @@ use url::Url;
 use xous::CID;
 use xous_ipc::Buffer;
 
-const LISTENER_POLL_INTERVAL_MS: usize = 250;
-
 struct WssStream<T: Read + Write>(T);
 
 impl<T: Read + Write> embedded_websocket::framer::Stream<Error> for WssStream<T> {
@@ -72,6 +70,8 @@ fn xmain() -> ! {
 
     // build a thread that emits a regular WebSocketOp::Tick to send a KeepAliveRequest
     spawn_tick_pump(ws_cid);
+    // build a thread that emits a regular WebSocketOp::Poll to check for inbound websocket frames
+    spawn_poll_pump(ws_cid);
 
     /*
     These buffers can be allocated here before the main loop, or alternatvely alocated and
@@ -92,8 +92,6 @@ fn xmain() -> ! {
 
     let mut store: HashMap<NonZeroU8, Assets<ThreadRng, StreamOwned<ClientConnection, TcpStream>>> =
         HashMap::new();
-
-    let ticktimer = ticktimer_server::Ticktimer::new().unwrap();
 
     log::trace!("ready to accept requests");
     loop {
@@ -233,6 +231,29 @@ fn xmain() -> ! {
                 let response = api::Return::SubProtocol(sub_protocol);
                 buf.replace(response).unwrap();
             }),
+            Some(Opcode::Poll) => {
+                // Check each websocket for an inbound frame to read and send to the cid
+                for (_pid, assets) in &mut store {
+                    let mut framer = Framer::new(
+                        &mut read_buf,
+                        &mut read_cursor,
+                        &mut write_buf,
+                        &mut assets.socket,
+                    );
+
+                    while let Some(frame) = framer
+                        .read_binary(&mut assets.stream, &mut frame_buf)
+                        .expect("failed to read websocket")
+                    {
+                        let frame = Frame::new(frame);
+                        let buf =
+                            Buffer::into_buf(frame).expect("failed to import websocket frame");
+                        buf.send(assets.cid, assets.opcode)
+                            .expect("failed to send websocket frame");
+                    }
+                }
+                log::info!("Websocket poll complete");
+            }
             Some(Opcode::Send) => xous::msg_scalar_unpack!(msg, msg_type, _, _, _, {
                 let pid = msg.sender.pid().unwrap();
                 let mut buf = unsafe {
@@ -301,30 +322,6 @@ fn xmain() -> ! {
                 log::error!("couldn't convert opcode: {:?}", msg);
             }
         }
-
-        /*
-        Check each websocket for an inbound frame to read and send to the cid
-        */
-        for (_pid, assets) in &mut store {
-            let mut framer = Framer::new(
-                &mut read_buf,
-                &mut read_cursor,
-                &mut write_buf,
-                &mut assets.socket,
-            );
-
-            while let Some(frame) = framer
-                .read_binary(&mut assets.stream, &mut frame_buf)
-                .expect("failed to read websocket")
-            {
-                let frame = Frame::new(frame);
-                let buf = Buffer::into_buf(frame).expect("failed to import websocket frame");
-                buf.send(assets.cid, assets.opcode)
-                    .expect("failed to send websocket frame");
-            }
-        }
-
-        ticktimer.sleep_ms(LISTENER_POLL_INTERVAL_MS).unwrap();
     }
     // clean up our program
     log::trace!("main loop exit, destroying servers");
@@ -332,6 +329,30 @@ fn xmain() -> ! {
     xous::destroy_server(ws_sid).unwrap();
     log::trace!("quitting");
     xous::terminate_process(0)
+}
+
+// build a thread that emits a regular WebSocketOp::Poll to check for inbound websocket frames
+fn spawn_poll_pump(cid: CID) {
+    thread::spawn({
+        move || {
+            let tt = ticktimer_server::Ticktimer::new().unwrap();
+            loop {
+                tt.sleep_ms(LISTENER_POLL_INTERVAL_MS.as_millis().try_into().unwrap())
+                    .unwrap();
+                xous::send_message(
+                    cid,
+                    xous::Message::new_scalar(
+                        Opcode::Poll.to_usize().unwrap(),
+                        LISTENER_POLL_INTERVAL_MS.as_secs().try_into().unwrap(),
+                        0,
+                        0,
+                        0,
+                    ),
+                )
+                .expect("couldn't send Websocket poll");
+            }
+        }
+    });
 }
 
 // build a thread that emits a regular WebSocketOp::Tick to send a KeepAliveRequest

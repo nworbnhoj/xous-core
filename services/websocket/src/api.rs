@@ -4,6 +4,7 @@ pub(crate) const SERVER_NAME_WEBSOCKET: &str = "_Websocket Service_";
 use std::time::Duration;
 
 pub(crate) const KEEPALIVE_TIMEOUT_SECONDS: Duration = Duration::from_secs(55);
+pub(crate) const LISTENER_POLL_INTERVAL_MS: Duration = Duration::from_millis(250);
 pub(crate) const URL_LENGTH_LIMIT: usize = 200;
 pub(crate) const HINT_LEN: usize = 128;
 
@@ -30,6 +31,8 @@ pub(crate) enum Opcode {
     Close = 1,
     /// open a new websocket
     Open,
+    /// poll websockets for inbound frames
+    Poll,
     /// send a websocket frame
     Send,
     /// send a KeepAliveRequest
