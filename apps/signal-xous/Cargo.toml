@@ -19,13 +19,14 @@ gam = {path = "../../services/gam" }
 graphics-server = {path = "../../services/graphics-server" }
 trng = {path = "../../services/trng"}
 locales = {path = "../../locales"}
+modals = {path = "../../services/modals"}
 ime-plugin-api = {path = "../../services/ime-plugin-api"}
 ime-plugin-shell = {path = "../../services/ime-plugin-shell"}
 content-plugin-api = {path = "../../services/content-plugin-api"} # all content canvas providers must provide this API
 com = {path = "../../services/com"}
 llio = {path = "../../services/llio"}
 codec = {path = "../../services/codec"}
-
+phonenumber = "0.3"
 
 base64 = "0.12"
 serde = "1.0"
