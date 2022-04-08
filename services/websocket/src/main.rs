@@ -217,7 +217,6 @@ fn xmain() -> ! {
                     Assets {
                         stream: wss_stream,
                         socket: ws_client,
-                        // TODO DANGER review conversion usize as u32
                         cid: cid as u32,
                         opcode: opcode as u32,
                     },
