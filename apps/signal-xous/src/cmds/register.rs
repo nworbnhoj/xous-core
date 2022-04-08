@@ -10,6 +10,8 @@ use regex::Regex;
 
 use xous::{MessageEnvelope};
 use xous_names::XousNames;
+use modals::Modals;
+
  
 use phonenumber::PhoneNumber;
 use std::str::FromStr;
@@ -52,9 +54,7 @@ impl Register {
         }
     }
 
-    fn get_phonenumber(&mut self) -> Option<PhoneNumber> {
-        let xns = XousNames::new().unwrap();
-        let modals = modals::Modals::new(&xns).unwrap();
+    fn get_phonenumber(&mut self, modals: &Modals) -> Option<PhoneNumber> {
         let text = modals
             .get_text(
                 t!("signal.register.phone.modal.name", xous::LANG),
@@ -63,9 +63,10 @@ impl Register {
             )
             .expect("Phone Number modal returned no text");
 
-        let phone_number = PhoneNumber::from_str(text.as_str()).expect("Invalid Phone Number provided");
-
-        Some(phone_number)
+        match PhoneNumber::from_str(text.as_str()) {
+            Ok(phone_number) => Some(phone_number),
+            Err(e) => None,
+        }
     }
 
     fn phone_number_validator(
@@ -73,7 +74,7 @@ impl Register {
         _opcode: u32,
     ) -> Option<xous_ipc::String<256>> {
         let text_str = input.as_str();
-        let re = Regex::new(r"^\+[d]{10,13}$").unwrap();
+        let re = Regex::new(r"^$|^\+[d]{10,13}$").unwrap();
         if re.is_match(text_str) {
             None
         } else {
@@ -82,6 +83,8 @@ impl Register {
             ))
         }
     }
+    
+    
 }
 
 impl<'a> ShellCmdApi<'a> for Register {
@@ -93,8 +96,14 @@ impl<'a> ShellCmdApi<'a> for Register {
         env: &mut CommonEnv,
     ) -> Result<Option<xous_ipc::String<1024>>, xous::Error> {
         let mut ret = xous_ipc::String::<1024>::new();
+                
+        let xns = XousNames::new().unwrap();
+        let modals = modals::Modals::new(&xns).unwrap();
 
-        let phone_number = self.get_phonenumber();
+        let phone_number = self.get_phonenumber(&modals);
+        
+  //      modals.show_qrcode("https://signalcaptchas.org/registration/generate.html");
+        
 
         if self.phone_number.is_some() {
             env.manager.register(
