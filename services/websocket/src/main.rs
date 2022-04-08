@@ -73,18 +73,11 @@ fn xmain() -> ! {
     // build a thread that emits a regular WebSocketOp::Poll to check for inbound websocket frames
     spawn_poll_pump(ws_cid);
 
-    /*
-    These buffers can be allocated here before the main loop, or alternatvely alocated and
-    de-allocated within the loop as required ( presumably, trading memory with performance )
-    TODO review/test/optimise buffer allocation
-    TODO review need to zero buffer before reuse (if allocating shared buffers here)
-    */
     let mut read_buf = [0; WEBSOCKET_BUFFER_LEN];
     let mut read_cursor = 0;
     let mut write_buf = [0; WEBSOCKET_BUFFER_LEN];
     let mut frame_buf = [0; WEBSOCKET_BUFFER_LEN];
     let mut _read_buf = [0; WEBSOCKET_BUFFER_LEN];
-
     /*
     store holds the assets of existing websockets by pid - and as such - limits each pid to 1 websocket.
     TODO review the limitation of 1 websocket per pid.
@@ -109,6 +102,7 @@ fn xmain() -> ! {
                         continue;
                     }
                 };
+                zero(&mut vec![&mut read_buf[..], &mut write_buf[..]]);
                 let mut framer =
                     Framer::new(&mut read_buf, &mut read_cursor, &mut write_buf, socket);
 
@@ -195,6 +189,7 @@ fn xmain() -> ! {
 
                 let mut ws_client = WebSocketClient::new_client(rand::thread_rng());
 
+                zero(&mut vec![&mut read_buf[..], &mut write_buf[..]]);
                 let mut framer = Framer::new(
                     &mut read_buf,
                     &mut read_cursor,
@@ -234,6 +229,7 @@ fn xmain() -> ! {
             Some(Opcode::Poll) => {
                 // Check each websocket for an inbound frame to read and send to the cid
                 for (_pid, assets) in &mut store {
+                    zero(&mut vec![&mut read_buf[..], &mut write_buf[..]]);
                     let mut framer = Framer::new(
                         &mut read_buf,
                         &mut read_cursor,
@@ -276,6 +272,7 @@ fn xmain() -> ! {
                     }
                 };
 
+                zero(&mut vec![&mut read_buf[..], &mut write_buf[..]]);
                 let mut framer =
                     Framer::new(&mut read_buf, &mut read_cursor, &mut write_buf, socket);
 
@@ -300,6 +297,7 @@ fn xmain() -> ! {
                 // TODO review keep alive request technique
                 let frame_buf = "keep alive please :-)".as_bytes();
 
+                zero(&mut vec![&mut read_buf[..], &mut write_buf[..]]);
                 let mut framer =
                     Framer::new(&mut read_buf, &mut read_cursor, &mut write_buf, socket);
 
@@ -382,6 +380,12 @@ fn spawn_tick_pump(cid: CID) {
 fn drop(hint: &str) -> api::Return {
     log::info!("{}", hint);
     api::Return::Failure(xous_ipc::String::from_str(hint))
+}
+
+fn zero(dirty: &mut Vec<&mut [u8]>) {
+    dirty
+        .iter_mut()
+        .for_each(|d| d.iter_mut().for_each(|u| *u = 0));
 }
 
 fn ssl_config(certificate_authority: &str) -> rustls::ClientConfig {
