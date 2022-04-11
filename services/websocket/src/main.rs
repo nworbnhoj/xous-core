@@ -3,10 +3,8 @@
 
 mod api;
 use api::*;
-use embedded_websocket::{
-    framer::Framer, WebSocketClient, WebSocketCloseStatusCode, WebSocketOptions,
-    WebSocketSendMessageType,
-};
+use derive_deref::*;
+use embedded_websocket as ws;
 use num_traits::{FromPrimitive, ToPrimitive};
 use rand::rngs::ThreadRng;
 use rustls::{ClientConnection, StreamOwned};
@@ -20,12 +18,17 @@ use std::{
     thread,
 };
 use url::Url;
+use ws::framer::Framer;
+use ws::WebSocketCloseStatusCode as StatusCode;
+use ws::WebSocketSendMessageType as MessageType;
+use ws::{WebSocketClient, WebSocketOptions};
 use xous::CID;
 use xous_ipc::Buffer;
 
-struct WssStream<T: Read + Write>(T);
+#[derive(Deref, DerefMut)]
+struct WsStream<T: Read + Write>(T);
 
-impl<T: Read + Write> embedded_websocket::framer::Stream<Error> for WssStream<T> {
+impl<T: Read + Write> ws::framer::Stream<Error> for WsStream<T> {
     fn read(&mut self, buf: &mut [u8]) -> std::result::Result<usize, Error> {
         self.0.read(buf)
     }
@@ -35,9 +38,10 @@ impl<T: Read + Write> embedded_websocket::framer::Stream<Error> for WssStream<T>
     }
 }
 
-struct Assets<R: rand::RngCore, T: Read + Write> {
+struct Assets<R: rand::RngCore> {
     socket: WebSocketClient<R>,
-    stream: WssStream<T>,
+    wss_stream: Option<WsStream<StreamOwned<ClientConnection, TcpStream>>>,
+    ws_stream: Option<WsStream<TcpStream>>,
     cid: CID,
     opcode: u32,
 }
@@ -83,8 +87,7 @@ fn xmain() -> ! {
     TODO review the limitation of 1 websocket per pid.
     */
 
-    let mut store: HashMap<NonZeroU8, Assets<ThreadRng, StreamOwned<ClientConnection, TcpStream>>> =
-        HashMap::new();
+    let mut store: HashMap<NonZeroU8, Assets<ThreadRng>> = HashMap::new();
 
     log::trace!("ready to accept requests");
     loop {
@@ -95,8 +98,12 @@ fn xmain() -> ! {
                 let mut buf = unsafe {
                     Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap())
                 };
-                let (socket, stream) = match store.get_mut(&pid) {
-                    Some(assets) => (&mut assets.socket, &mut assets.stream),
+                let (mut socket, wss_stream, ws_stream) = match store.get_mut(&pid) {
+                    Some(assets) => (
+                        &mut assets.socket,
+                        &mut assets.wss_stream,
+                        &mut assets.ws_stream,
+                    ),
                     None => {
                         buf.replace(drop("Websocket assets not in list")).unwrap();
                         continue;
@@ -104,9 +111,21 @@ fn xmain() -> ! {
                 };
                 zero(&mut vec![&mut read_buf[..], &mut write_buf[..]]);
                 let mut framer =
-                    Framer::new(&mut read_buf, &mut read_cursor, &mut write_buf, socket);
+                    Framer::new(&mut read_buf, &mut read_cursor, &mut write_buf, &mut socket);
 
-                match framer.close(stream, WebSocketCloseStatusCode::NormalClosure, None) {
+                let response = match wss_stream {
+                    Some(stream) => framer.close(&mut *stream, StatusCode::NormalClosure, None),
+
+                    None => match ws_stream {
+                        Some(stream) => framer.close(&mut *stream, StatusCode::NormalClosure, None),
+
+                        None => {
+                            log::info!("Assets missing both wss_stream and ws_stream");
+                            continue;
+                        }
+                    },
+                };
+                match response {
                     Ok(()) => log::info!("Sent close handshake"),
                     Err(e) => {
                         let hint = format!("Failed to send close handshake {:?}", e);
@@ -125,7 +144,6 @@ fn xmain() -> ! {
                     continue;
                 }
                 let ws_config = buf.to_original::<WebsocketConfig, _>().unwrap();
-
                 let base_url = ws_config
                     .base_url
                     .as_str()
@@ -147,8 +165,23 @@ fn xmain() -> ! {
                         .append_pair("login", &login)
                         .append_pair("password", &password);
                 }
+                let websocket_options = WebSocketOptions {
+                    path: &path,
+                    host: &base_url,
+                    origin: "",
+                    sub_protocols: None,
+                    additional_headers: None,
+                };
+                let mut ws_client = WebSocketClient::new_client(rand::thread_rng());
+                zero(&mut vec![&mut read_buf[..], &mut write_buf[..]]);
+                let mut framer = Framer::new(
+                    &mut read_buf,
+                    &mut read_cursor,
+                    &mut write_buf,
+                    &mut ws_client,
+                );
 
-                // Create a TCP Stream between this client and the remote Server
+                // Create a TCP Stream between this device and the remote Server
                 let tcp_stream = match TcpStream::connect(url.as_str()) {
                     Ok(tcp_stream) => tcp_stream,
                     Err(e) => {
@@ -159,46 +192,14 @@ fn xmain() -> ! {
                 };
                 log::info!("TCP connected to {:?}", base_url);
 
-                // Create a TLS connection to the remote Server on the TCP Stream
-                let ca = ws_config
-                    .certificate_authority
-                    .as_str()
-                    .expect("certificate_authority utf-8 decode error");
-                let tls_connector = RustlsConnector::from(ssl_config(ca));
-                let tls_stream = match tls_connector.connect(base_url, tcp_stream) {
-                    Ok(stream) => {
-                        log::info!("TLS connected to {:?}", base_url);
-                        stream
-                    }
-                    Err(e) => {
-                        let hint = format!("Failed to complete TLS handshake {:?}", e);
-                        buf.replace(drop(&hint)).unwrap();
-                        continue;
-                    }
-                };
-
-                // Initiate a websocket opening handshake over the TLS Stream
-                let websocket_options = WebSocketOptions {
-                    path: &path,
-                    host: &base_url,
-                    origin: "",
-                    sub_protocols: None,
-                    additional_headers: None,
-                };
-                let mut wss_stream = WssStream(tls_stream);
-
-                let mut ws_client = WebSocketClient::new_client(rand::thread_rng());
-
-                zero(&mut vec![&mut read_buf[..], &mut write_buf[..]]);
-                let mut framer = Framer::new(
-                    &mut read_buf,
-                    &mut read_cursor,
-                    &mut write_buf,
-                    &mut ws_client,
-                );
-
-                let sub_protocol: xous_ipc::String<HINT_LEN> =
-                    match framer.connect(&mut wss_stream, &websocket_options) {
+                let ws_stream = None;
+                let wss_stream = None;
+                let sub_protocol: xous_ipc::String<HINT_LEN>;
+                if ws_config.certificate_authority.is_none() {
+                    // Initiate a websocket opening handshake over the TCP Stream
+                    let ws_stream = Some(WsStream(tcp_stream));
+                    sub_protocol = match framer.connect(&mut ws_stream.unwrap(), &websocket_options)
+                    {
                         Ok(opt) => match opt {
                             Some(sp) => xous_ipc::String::from_str(sp.to_string()),
                             None => xous_ipc::String::from_str(""),
@@ -209,14 +210,49 @@ fn xmain() -> ! {
                             continue;
                         }
                     };
+                } else {
+                    // Create a TLS connection to the remote Server on the TCP Stream
+                    let ca = ws_config.certificate_authority.unwrap();
+                    let ca = ca
+                        .as_str()
+                        .expect("certificate_authority utf-8 decode error");
+                    let tls_connector = RustlsConnector::from(ssl_config(ca));
+                    let tls_stream = match tls_connector.connect(base_url, tcp_stream) {
+                        Ok(tls_stream) => {
+                            log::info!("TLS connected to {:?}", base_url);
+                            tls_stream
+                        }
+                        Err(e) => {
+                            let hint = format!("Failed to complete TLS handshake {:?}", e);
+                            buf.replace(drop(&hint)).unwrap();
+                            continue;
+                        }
+                    };
+                    // Initiate a websocket opening handshake over the TLS Stream
+                    let wss_stream = Some(WsStream(tls_stream));
+                    sub_protocol =
+                        match framer.connect(&mut wss_stream.unwrap(), &websocket_options) {
+                            Ok(opt) => match opt {
+                                Some(sp) => xous_ipc::String::from_str(sp.to_string()),
+                                None => xous_ipc::String::from_str(""),
+                            },
+                            Err(e) => {
+                                let hint = format!("Unable to connect WebSocket {:?}", e);
+                                buf.replace(drop(&hint)).unwrap();
+                                continue;
+                            }
+                        };
+                }
+
                 log::info!("WebSocket connected with: {:?}", sub_protocol);
 
                 // Store the open websocket indexed by the calling pid
                 store.insert(
                     pid,
                     Assets {
-                        stream: wss_stream,
                         socket: ws_client,
+                        wss_stream: wss_stream,
+                        ws_stream: ws_stream,
                         cid: cid as u32,
                         opcode: opcode as u32,
                     },
@@ -236,17 +272,33 @@ fn xmain() -> ! {
                         &mut assets.socket,
                     );
 
-                    while let Some(frame) = framer
-                        .read_binary(&mut assets.stream, &mut frame_buf)
-                        .expect("failed to read websocket")
-                    {
-                        let frame = Frame::new(frame);
-                        let buf =
-                            Buffer::into_buf(frame).expect("failed to import websocket frame");
-                        buf.send(assets.cid, assets.opcode)
-                            .expect("failed to send websocket frame");
-                    }
+                    let (wss_stream, ws_stream, cid, opcode) = {
+                        (
+                            &mut assets.wss_stream,
+                            &mut assets.ws_stream,
+                            assets.cid,
+                            assets.opcode,
+                        )
+                    };
+
+                    match wss_stream {
+                        Some(stream) => {
+                            poll(&mut framer, &mut *stream, &mut frame_buf, cid, opcode)
+                        }
+
+                        None => match ws_stream {
+                            Some(stream) => {
+                                poll(&mut framer, &mut *stream, &mut frame_buf, cid, opcode)
+                            }
+
+                            None => {
+                                log::info!("Assets missing both wss_stream and ws_stream");
+                                continue;
+                            }
+                        },
+                    };
                 }
+
                 log::info!("Websocket poll complete");
             }
             Some(Opcode::Send) => xous::msg_scalar_unpack!(msg, msg_type, _, _, _, {
@@ -254,16 +306,20 @@ fn xmain() -> ! {
                 let mut buf = unsafe {
                     Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap())
                 };
-                let (socket, stream) = match store.get_mut(&pid) {
-                    Some(assets) => (&mut assets.socket, &mut assets.stream),
+                let (socket, wss_stream, ws_stream) = match store.get_mut(&pid) {
+                    Some(assets) => (
+                        &mut assets.socket,
+                        &mut assets.wss_stream,
+                        &mut assets.ws_stream,
+                    ),
                     None => {
                         buf.replace(drop("Websocket assets not in list")).unwrap();
                         continue;
                     }
                 };
                 let ws_msg_type = match FromPrimitive::from_usize(msg_type) {
-                    Some(SendMessageType::Text) => WebSocketSendMessageType::Text,
-                    Some(SendMessageType::Binary) => WebSocketSendMessageType::Binary,
+                    Some(SendMessageType::Text) => MessageType::Text,
+                    Some(SendMessageType::Binary) => MessageType::Binary,
                     invalid => {
                         let hint = format!("Invalid value SendMessageType: {:?}", invalid);
                         buf.replace(drop(&hint)).unwrap();
@@ -275,7 +331,19 @@ fn xmain() -> ! {
                 let mut framer =
                     Framer::new(&mut read_buf, &mut read_cursor, &mut write_buf, socket);
 
-                match framer.write(stream, ws_msg_type, true, &buf) {
+                let response = match wss_stream {
+                    Some(stream) => framer.write(&mut *stream, ws_msg_type, true, &buf),
+
+                    None => match ws_stream {
+                        Some(stream) => framer.write(&mut *stream, ws_msg_type, true, &buf),
+
+                        None => {
+                            log::info!("Assets missing both wss_stream and ws_stream");
+                            continue;
+                        }
+                    },
+                };
+                match response {
                     Ok(()) => log::info!("Websocket frame sent"),
                     Err(e) => {
                         let hint = format!("failed to send Websocket frame {:?}", e);
@@ -286,8 +354,12 @@ fn xmain() -> ! {
             }),
             Some(Opcode::Tick) => {
                 let pid = msg.sender.pid().unwrap();
-                let (socket, stream) = match store.get_mut(&pid) {
-                    Some(assets) => (&mut assets.socket, &mut assets.stream),
+                let (socket, wss_stream, ws_stream) = match store.get_mut(&pid) {
+                    Some(assets) => (
+                        &mut assets.socket,
+                        &mut assets.wss_stream,
+                        &mut assets.ws_stream,
+                    ),
                     None => {
                         log::info!("Websocket assets not in list");
                         continue;
@@ -300,7 +372,22 @@ fn xmain() -> ! {
                 let mut framer =
                     Framer::new(&mut read_buf, &mut read_cursor, &mut write_buf, socket);
 
-                match framer.write(stream, WebSocketSendMessageType::Text, true, &frame_buf) {
+                let response = match wss_stream {
+                    Some(stream) => framer.write(&mut *stream, MessageType::Text, true, &frame_buf),
+
+                    None => match ws_stream {
+                        Some(stream) => {
+                            framer.write(&mut *stream, MessageType::Text, true, &frame_buf)
+                        }
+
+                        None => {
+                            log::info!("Assets missing both wss_stream and ws_stream");
+                            continue;
+                        }
+                    },
+                };
+
+                match response {
                     Ok(()) => log::info!("Websocket keep-alive request sent"),
                     Err(e) => {
                         log::info!("failed to send Websocket keep-alive request {:?}", e);
@@ -387,6 +474,29 @@ fn zero(dirty: &mut Vec<&mut [u8]>) {
         .for_each(|d| d.iter_mut().for_each(|u| *u = 0));
 }
 
+fn poll<E, R, S, T>(
+    framer: &mut Framer<R, S>,
+    stream: &mut T,
+    frame_buf: &mut [u8],
+    cid: CID,
+    opcode: u32,
+) where
+    E: std::fmt::Debug,
+    R: rand::RngCore,
+    T: ws::framer::Stream<E>,
+    S: ws::WebSocketType,
+{
+    while let Some(frame) = framer
+        .read_binary(&mut *stream, frame_buf)
+        .expect("failed to read websocket")
+    {
+        let frame = Frame::new(frame);
+        let buf = Buffer::into_buf(frame).expect("failed to import websocket frame");
+        buf.send(cid, opcode)
+            .expect("failed to send websocket frame");
+    }
+}
+
 fn ssl_config(certificate_authority: &str) -> rustls::ClientConfig {
     let mut cert_bytes = std::io::Cursor::new(&certificate_authority);
     let roots = rustls_pemfile::certs(&mut cert_bytes).expect("parseable PEM files");
@@ -402,3 +512,12 @@ fn ssl_config(certificate_authority: &str) -> rustls::ClientConfig {
         .with_root_certificates(root_certs)
         .with_no_client_auth()
 }
+
+/*
+fn store_get(
+    pid: NonZeroU8,
+    tcp_store: HashMap<NonZeroU8, Assets<ThreadRng, TcpStream>>,
+    tls_store: HashMap<NonZeroU8, Assets<ThreadRng, StreamOwned<ClientConnection, TcpStream>>>,
+) -> Option<Box<Assets<ThreadRng, dyn Brook>>> {
+}
+*/
