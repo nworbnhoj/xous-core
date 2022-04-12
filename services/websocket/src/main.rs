@@ -47,19 +47,6 @@ struct Assets<R: rand::RngCore> {
     opcode: u32,
 }
 
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-struct Frame {
-    buffer: [u8; WEBSOCKET_BUFFER_LEN],
-}
-
-impl Frame {
-    pub fn new(buf: &[u8]) -> Self {
-        Self {
-            buffer: buf.try_into().expect("buffer of incorrect length"),
-        }
-    }
-}
-
 #[xous::xous_main]
 fn xmain() -> ! {
     log_server::init_wait().unwrap();
@@ -491,8 +478,10 @@ fn poll<E, R, S, T>(
         .read_binary(&mut *stream, frame_buf)
         .expect("failed to read websocket")
     {
-        let frame = Frame::new(frame);
-        let buf = Buffer::into_buf(frame).expect("failed to import websocket frame");
+        let frame: [u8; WEBSOCKET_BUFFER_LEN] =
+            frame.try_into().expect("websocket frame too large for buffer");
+        let buf = Buffer::into_buf(Return::Frame(frame))
+            .expect("failed to serialize websocket frame into buffer");
         buf.send(cid, opcode)
             .expect("failed to send websocket frame");
     }
@@ -513,5 +502,3 @@ fn ssl_config(certificate_authority: &str) -> rustls::ClientConfig {
         .with_root_certificates(root_certs)
         .with_no_client_auth()
 }
-
-

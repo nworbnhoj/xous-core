@@ -43,6 +43,7 @@ pub(crate) enum Opcode {
 
 #[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub(crate) enum Return {
+    Frame([u8; WEBSOCKET_BUFFER_LEN]),
     SubProtocol(xous_ipc::String<SUB_PROTOCOL_LEN>),
     Failure(xous_ipc::String<HINT_LEN>),
 }
