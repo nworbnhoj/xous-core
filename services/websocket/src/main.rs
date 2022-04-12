@@ -3,6 +3,7 @@
 
 mod api;
 use api::*;
+
 use derive_deref::*;
 use embedded_websocket as ws;
 use num_traits::{FromPrimitive, ToPrimitive};
@@ -134,7 +135,7 @@ fn xmain() -> ! {
                     }
                 };
             }
-            Some(Opcode::Open) => xous::msg_scalar_unpack!(msg, cid, opcode, _, _, {
+            Some(Opcode::Open) => {
                 let pid = msg.sender.pid().unwrap();
                 let mut buf = unsafe {
                     Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap())
@@ -253,14 +254,14 @@ fn xmain() -> ! {
                         socket: ws_client,
                         wss_stream: wss_stream,
                         ws_stream: ws_stream,
-                        cid: cid as u32,
-                        opcode: opcode as u32,
+                        cid: ws_config.cid,
+                        opcode: ws_config.opcode,
                     },
                 );
 
                 let response = api::Return::SubProtocol(sub_protocol);
                 buf.replace(response).unwrap();
-            }),
+            }
             Some(Opcode::Poll) => {
                 // Check each websocket for an inbound frame to read and send to the cid
                 for (_pid, assets) in &mut store {
@@ -513,11 +514,4 @@ fn ssl_config(certificate_authority: &str) -> rustls::ClientConfig {
         .with_no_client_auth()
 }
 
-/*
-fn store_get(
-    pid: NonZeroU8,
-    tcp_store: HashMap<NonZeroU8, Assets<ThreadRng, TcpStream>>,
-    tls_store: HashMap<NonZeroU8, Assets<ThreadRng, StreamOwned<ClientConnection, TcpStream>>>,
-) -> Option<Box<Assets<ThreadRng, dyn Brook>>> {
-}
-*/
+

@@ -63,4 +63,6 @@ pub struct WebsocketConfig {
     pub use_credentials: bool,
     pub login: xous_ipc::String<LOGIN_LEN>,
     pub password: xous_ipc::String<PASSWORD_LEN>,
+    pub cid: u32,
+    pub opcode: u32,
 }
