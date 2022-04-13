@@ -4,6 +4,8 @@
 mod api;
 use api::*;
 
+mod ws_test;
+
 use derive_deref::*;
 use embedded_websocket as ws;
 use num_traits::{FromPrimitive, ToPrimitive};
@@ -59,6 +61,13 @@ fn xmain() -> ! {
         .expect("can't register server");
     log::trace!("registered with NS -- {:?}", ws_sid);
     let ws_cid = xous::connect(ws_sid).unwrap();
+
+    #[cfg(feature = "ws_test")]
+    {
+        let test_op = Opcode::Test.to_usize().unwrap();
+        xous::send_message(ws_cid, xous::Message::new_scalar(test_op, 0, 0, 0, 0))
+            .expect("failed to send Opcode::Test");
+    }
 
     // build a thread that emits a regular WebSocketOp::Tick to send a KeepAliveRequest
     spawn_tick_pump(ws_cid);
@@ -340,6 +349,12 @@ fn xmain() -> ! {
                     }
                 };
             }),
+            #[cfg(feature = "ws_test")]
+            Some(Opcode::Test) => {
+                let _pid = msg.sender.pid().unwrap();
+                ws_test::local::tcp();
+                // ws_test::local::tls();
+            }
             Some(Opcode::Tick) => {
                 let pid = msg.sender.pid().unwrap();
                 let (socket, wss_stream, ws_stream) = match store.get_mut(&pid) {
@@ -478,8 +493,9 @@ fn poll<E, R, S, T>(
         .read_binary(&mut *stream, frame_buf)
         .expect("failed to read websocket")
     {
-        let frame: [u8; WEBSOCKET_BUFFER_LEN] =
-            frame.try_into().expect("websocket frame too large for buffer");
+        let frame: [u8; WEBSOCKET_BUFFER_LEN] = frame
+            .try_into()
+            .expect("websocket frame too large for buffer");
         let buf = Buffer::into_buf(Return::Frame(frame))
             .expect("failed to serialize websocket frame into buffer");
         buf.send(cid, opcode)

@@ -35,6 +35,9 @@ pub(crate) enum Opcode {
     Poll,
     /// send a websocket frame
     Send,
+    #[cfg(feature = "ws_test")]
+    /// run a local websocket test
+    Test,
     /// send a KeepAliveRequest
     Tick,
     /// Close Websocket and shutdown server

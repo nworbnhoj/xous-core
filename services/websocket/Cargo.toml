@@ -26,6 +26,7 @@ rand_core = "0.6.3"
 rkyv = {version = "0.4.3", default-features = false, features = ["const_generics"]}
 rustls-pemfile = "0.3.0"
 derive_deref = "1.1.1"
+httparse = "1.7.0"
 
 
 [target.'cfg(not(any(windows,unix)))'.dependencies]
@@ -33,3 +34,6 @@ utralib = { path = "../../utralib"}
 
 [features]
 default = []
+ws_test  = []
+
+
