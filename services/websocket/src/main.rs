@@ -41,11 +41,17 @@ impl<T: Read + Write> ws::framer::Stream<Error> for WsStream<T> {
     }
 }
 
+/** Holds the machinery for each websocket between Opcode calls */
 struct Assets<R: rand::RngCore> {
+    /** the configuration of an open websocket */
     socket: WebSocketClient<R>,
+    /** a websocket stream when opened on a tls conneciton */
     wss_stream: Option<WsStream<StreamOwned<ClientConnection, TcpStream>>>,
+    /** a websocket stream when opened on a tcp conneciton */
     ws_stream: Option<WsStream<TcpStream>>,
+    /** the callback_id to use when relaying an inbound websocket frame */
     cid: CID,
+    /** the opcode to use when relaying an inbound websocket frame */
     opcode: u32,
 }
 
@@ -63,6 +69,7 @@ fn xmain() -> ! {
     let ws_cid = xous::connect(ws_sid).unwrap();
 
     #[cfg(feature = "ws_test")]
+    /** Run a basic test on a tcp & tls connection to a local websocket server listening on 127.0.0.1:1337. */
     {
         let test_op = Opcode::Test.to_usize().unwrap();
         xous::send_message(ws_cid, xous::Message::new_scalar(test_op, 0, 0, 0, 0))
@@ -79,11 +86,9 @@ fn xmain() -> ! {
     let mut write_buf = [0; WEBSOCKET_BUFFER_LEN];
     let mut frame_buf = [0; WEBSOCKET_BUFFER_LEN];
     let mut _read_buf = [0; WEBSOCKET_BUFFER_LEN];
-    /*
-    store holds the assets of existing websockets by pid - and as such - limits each pid to 1 websocket.
-    TODO review the limitation of 1 websocket per pid.
-    */
 
+    /** holds the assets of existing websockets by pid - and as such - limits each pid to 1 websocket. */
+    // TODO review the limitation of 1 websocket per pid.
     let mut store: HashMap<NonZeroU8, Assets<ThreadRng>> = HashMap::new();
 
     log::trace!("ready to accept requests");
@@ -471,17 +476,20 @@ fn spawn_tick_pump(cid: CID) {
     });
 }
 
+/** helper function to return hints from opcode panics */
 fn drop(hint: &str) -> api::Return {
     log::info!("{}", hint);
     api::Return::Failure(xous_ipc::String::from_str(hint))
 }
 
+/** fill all Arrays in the Vector with 0's  */
 fn zero(dirty: &mut Vec<&mut [u8]>) {
     dirty
         .iter_mut()
         .for_each(|d| d.iter_mut().for_each(|u| *u = 0));
 }
 
+/** read all available frames from the websocket and relay each frame to the caller_id */
 fn poll<E, R, S, T>(
     framer: &mut Framer<R, S>,
     stream: &mut T,
@@ -508,6 +516,7 @@ fn poll<E, R, S, T>(
     }
 }
 
+/** complete the machinations of setting up a rustls::ClientConfig */
 fn ssl_config(certificate_authority: &str) -> rustls::ClientConfig {
     let mut cert_bytes = std::io::Cursor::new(&certificate_authority);
     let roots = rustls_pemfile::certs(&mut cert_bytes).expect("parseable PEM files");

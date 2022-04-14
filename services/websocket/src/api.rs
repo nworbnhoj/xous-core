@@ -1,19 +1,31 @@
+/// The websocket service can open, maintain and close a websocket connection.
+/// The service can also send data and regularly polls the connection for inbound
+/// data to forward to the CID provided when the websocket was opened.
+
 #[allow(dead_code)]
 pub(crate) const SERVER_NAME_WEBSOCKET: &str = "_Websocket Service_";
 
 use std::time::Duration;
 
+/** time between reglar websocket keep-alive requests */
 pub(crate) const KEEPALIVE_TIMEOUT_SECONDS: Duration = Duration::from_secs(55);
+/** time between regulr pol for inboud frames on open websockets */
 pub(crate) const LISTENER_POLL_INTERVAL_MS: Duration = Duration::from_millis(250);
+/** limit on the byte length of url strings */
 pub(crate) const URL_LENGTH_LIMIT: usize = 200;
+/** limit on the byte length of error hint strings */
 pub(crate) const HINT_LEN: usize = 128;
-
+/** limit on the byte length of certificate authority strings */
 pub(crate) const CA_LEN: usize = 1402;
+/** limit on the byte length of base-url strings */
 pub(crate) const BASEURL_LEN: usize = 128;
+/** limit on the byte length of url path strings */
 pub(crate) const PATH_LEN: usize = 128;
+/** limit on the byte length of authentication login strings */
 pub(crate) const LOGIN_LEN: usize = 128;
+/** limit on the byte length of authentication password strings */
 pub(crate) const PASSWORD_LEN: usize = 128;
-
+/** limit on the byte length of websocket sub-protocol strings */
 pub(crate) const SUB_PROTOCOL_LEN: usize = 128;
 
 /*
@@ -27,20 +39,46 @@ pub(crate) const WEBSOCKET_BUFFER_LEN: usize = 4096;
 /// These opcodes can be called by anyone at any time
 #[derive(num_derive::FromPrimitive, num_derive::ToPrimitive, Debug)]
 pub(crate) enum Opcode {
-    /// close and existing websocket
+    /// Close an existing websocket.
+    /// xous::Message::new_scalar(Opcode::Close, _, _, _, _)
     Close = 1,
-    /// open a new websocket
+    /// Open a new websocket.
+    /// Attempts to establish a new websocket connection based on WebsocketConfig and return
+    /// the sub_protocol nominated by the server (if any).
+    ///     let ws_config = WebsocketConfig {
+    ///         certificate_authority:     optional ca for a TLS connection - fallback to tcp
+    ///         base_url:                  the url of the target websocket server
+    ///         path:                      a path to apend to the url
+    ///         use_credentials:           true to authenticate
+    ///         login:                     authentication username
+    ///         password:                  authentication password
+    ///         cid:                       the callback id for inbound data frames
+    ///         opcode:                    the opcode for inbound data frames
+    ///     };
+    ///     let buf = Buffer::into_buf(ws_config);
+    ///     buf.lend(ws_cid, Opcode::Open).map(|_| ());
+    ///     let sub_protocol: Return::SubProtocol(protocol) = buf.to_original::<Return, _>().unwrap()
     Open,
-    /// poll websockets for inbound frames
+    /// Poll websockets for inbound frames.
+    /// An independent background thread is spawned to pump a regular Poll (LISTENER_POLL_INTERVAL_MS)
+    /// so there is normally no need to call this Opcode.
+    /// xous::Message::new_scalar(Opcode::Poll, _, _, _, _)
     Poll,
     /// send a websocket frame
     Send,
     #[cfg(feature = "ws_test")]
-    /// run a local websocket test
+    /// Run a local websocket test
+    /// On startup the websocket service will run a basic test on a tcp & tls connection to a local
+    /// websocket test server server established to listen on 127.0.0.1:1337. Do not run this option
+    /// in production.
     Test,
-    /// send a KeepAliveRequest
+    /// Send a KeepAliveRequest.
+    /// An independent background thread is spawned to pump a regular Tick (KEEPALIVE_TIMEOUT_SECONDS)
+    /// so there is normally no need to call this Opcode.
+    /// xous::Message::new_scalar(Opcode::Tick, _, _, _, _)
     Tick,
-    /// Close Websocket and shutdown server
+    /// Close all websockets and shutdown server
+    /// xous::Message::new_scalar(Opcode::Quit, _, _, _, _)
     Quit,
 }
 
@@ -61,12 +99,20 @@ pub enum SendMessageType {
 // a structure for defining the setup of a Websocket.
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct WebsocketConfig {
+    /** optional ca for a TLS connection - fallback to tcp */
     pub certificate_authority: Option<xous_ipc::String<CA_LEN>>,
+    /** the url of the target websocket server */
     pub base_url: xous_ipc::String<BASEURL_LEN>,
+    /** a path to apend to the url */
     pub path: xous_ipc::String<PATH_LEN>,
+    /** true to authenticate */
     pub use_credentials: bool,
+    /** authentication username */
     pub login: xous_ipc::String<LOGIN_LEN>,
+    /** authentication password */
     pub password: xous_ipc::String<PASSWORD_LEN>,
+    /** the callback id for inbound data frames */
     pub cid: u32,
+    /** the opcode for inbound data frames */
     pub opcode: u32,
 }
