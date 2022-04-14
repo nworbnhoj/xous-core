@@ -403,6 +403,11 @@ fn xmain() -> ! {
 
             Some(Opcode::Quit) => {
                 log::warn!("got quit!");
+                let close_op = Opcode::Close.to_usize().unwrap();
+                for (_pid, assets) in &mut store {
+                    xous::send_message(ws_cid, xous::Message::new_scalar(close_op, 0, 0, 0, 0))
+                        .expect("couldn't send Websocket poll");
+                }
                 break;
             }
             None => {
