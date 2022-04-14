@@ -94,6 +94,7 @@ pub(crate) struct ContextManager {
     main_menu_app_token: Option<[u32; 4]>, // app_token of the main menu, if it has been registered
     /// for internal generation of deface states
     pub trng: trng::Trng,
+    tt: ticktimer_server::Ticktimer,
 }
 impl ContextManager {
     pub fn new(xns: &xous_names::XousNames) -> Self {
@@ -114,6 +115,7 @@ impl ContextManager {
             kbd,
             main_menu_app_token: None,
             trng: trng::Trng::new(&xns).expect("couldn't connect to trng"),
+            tt: ticktimer_server::Ticktimer::new().unwrap(),
         }
     }
     pub(crate) fn claim_token(&mut self, name: &str) -> Option<[u32; 4]> {
@@ -364,10 +366,6 @@ impl ContextManager {
             // let all the previous operations go out of scope, so we can "check out" the old copy and modify it
             if self.focused_context.is_some() {
                 // immutable borrow here can't be combined with mutable borrow below
-                if let Some(old_context) = self.get_context_by_token(self.focused_context.unwrap()) {
-                    self.notify_focus_change_to(gam::FocusState::Background, old_context).unwrap();
-                    log::trace!("lowered focus to: {:?}", old_context);
-                }
                 if let Some(old_context) = self.get_context_by_token_mut(self.focused_context.unwrap()) {
                     old_context.layout.set_visibility_state(leaving_visibility, canvases);
                 }
@@ -428,7 +426,6 @@ impl ContextManager {
                 // revert the keyboard vibe state
                 self.kbd.set_vibe(context.vibe).expect("couldn't restore keyboard vibe");
 
-                self.notify_focus_change_to(gam::FocusState::Foreground, context).unwrap();
                 log::trace!("raised focus to: {:?}", context);
                 let last_token = context.app_token;
                 self.last_context = self.focused_context;
@@ -453,22 +450,41 @@ impl ContextManager {
             Err(xous::Error::UseBeforeInit)
         }
     }
-    fn notify_focus_change_to(&self, new_state: gam::FocusState, context: &UxContext) -> Result<(), xous::Error> {
-        if let Some(focuschange_id) = context.focuschange_id {
-            log::trace!("focus change {:?} msg to {}, id {}", new_state, context.listener, context.redraw_id);
-            return xous::send_message(context.listener,
-                xous::Message::new_scalar(focuschange_id as usize, new_state as usize, 0, 0, 0)
-            ).map(|_| ())
+    pub(crate) fn notify_app_switch(&self, new_app_token: [u32; 4]) -> Result<(), xous::Error> {
+        if let Some(old_context) = self.get_context_by_token(self.focused_context.unwrap()) {
+            if let Some(focuschange_id) = old_context.focuschange_id {
+                log::trace!("Background focus change to {}, id {}", old_context.listener, old_context.redraw_id);
+                xous::send_message(old_context.listener,
+                    xous::Message::new_scalar(focuschange_id as usize, gam::FocusState::Background as usize, 0, 0, 0)
+                ).map(|_| ())?;
+            } else {
+                return Err(xous::Error::ServerNotFound);
+            }
+        }
+        if let Some(new_context) = self.get_context_by_token(new_app_token) {
+            if let Some(focuschange_id) = new_context.focuschange_id {
+                log::trace!("Foreground focus change to {}, id {}", new_context.listener, new_context.redraw_id);
+                xous::send_message(new_context.listener,
+                    xous::Message::new_scalar(focuschange_id as usize, gam::FocusState::Foreground as usize, 0, 0, 0)
+                ).map(|_| ())?;
+            } else {
+                return Err(xous::Error::ServerNotFound);
+            }
         }
         Ok(())
     }
     pub(crate) fn redraw(&self) -> Result<(), xous::Error> { // redraws the currently focused context
         if let Some(token) = self.focused_app() {
             if let Some(context) = self.contexts.get(&token) {
-                log::trace!("redraw msg to {}, id {}", context.listener, context.redraw_id);
-                return xous::send_message(context.listener,
+                log::debug!("redraw msg to {}, id {}", context.listener, context.redraw_id);
+                let ret = xous::send_message(context.listener,
                     xous::Message::new_scalar(context.redraw_id as usize, 0, 0, 0, 0)
-                ).map(|_| ())
+                ).map(|_| ());
+                // this delay helps ensure that the previously requested UX redraw has time to complete
+                // in particular, this helps sequence the case where one modal is erased, and the next one is
+                // raised, in quick succession.
+                self.tt.sleep_ms(20).unwrap();
+                return ret
             }
         } else {
             return Err(xous::Error::UseBeforeInit)

@@ -79,7 +79,7 @@ pub(crate) fn connection_manager(sid: xous::SID, activity_interval: Arc<AtomicU3
         log::warn!("EC firmware is too old to interoperate with the connec tion manager.");
         let mut note = String::from(t!("net.ec_rev_old", xous::LANG));
         note.push_str(&format!("\n\n{}{}.{}.{}+{}", t!("net.ec_current_rev", xous::LANG), maj, min, rev, commits));
-        modals.show_notification(&note).unwrap();
+        modals.show_notification(&note, false).unwrap();
     }
 
     let run = Arc::new(AtomicBool::new(rev_ok));
@@ -107,9 +107,7 @@ pub(crate) fn connection_manager(sid: xous::SID, activity_interval: Arc<AtomicU3
         move || {
             let tt = ticktimer_server::Ticktimer::new().unwrap();
             let pddb = pddb::Pddb::new();
-            while !pddb.is_mounted() {
-                tt.sleep_ms(1103).unwrap(); // don't pump the loop until the PDDB has been mounted, but check back regularly
-            }
+            pddb.is_mounted_blocking();
             loop {
                 let msg = xous::receive_message(sid).unwrap();
                 match FromPrimitive::from_usize(msg.body.id()) {
@@ -133,9 +131,32 @@ pub(crate) fn connection_manager(sid: xous::SID, activity_interval: Arc<AtomicU3
         }
     });
 
-    let mut susres = susres::Susres::new(
-        Some(susres::SuspendOrder::Late), &xns,
-        ConnectionManagerOpcode::SuspendResume as u32, self_cid).expect("couldn't create suspend/resume object");
+    // this thread ensures that the connection manager does not become a blocking item for a suspend
+    // sometimes the connection manager can get stuck in very long ops, which will need to be restarted anyways
+    // on resume.
+    let _ = std::thread::spawn({
+        let main_cid: u32 = self_cid;
+        move || {
+            let sus_server = xous::create_server().unwrap();
+            let sus_cid = xous::connect(sus_server).unwrap();
+            let mut susres = susres::Susres::new(
+                Some(susres::SuspendOrder::Late), &xns,
+                0, sus_cid).expect("couldn't create suspend/resume object");
+            let tt = ticktimer_server::Ticktimer::new().unwrap();
+            loop {
+                let msg = xous::receive_message(sus_server).unwrap();
+                xous::msg_scalar_unpack!(msg, token, _, _, _, {
+                    // for now, nothing to do to prepare for suspend...
+                    susres.suspend_until_resume(token).expect("couldn't execute suspend/resume");
+                    // but on resume, kick a message to the main loop to tell it to recheck its connections!
+                    tt.sleep_ms(1000).unwrap(); // wait a full second before kicking out this message, so other services can normalize before attempting a re-connect
+                    xous::send_message(main_cid,
+                        Message::new_scalar(ConnectionManagerOpcode::SuspendResume.to_usize().unwrap(), 0, 0, 0, 0)
+                    ).expect("couldn't send the resume message to the main thread");
+                });
+            }
+        }
+    });
 
     com.set_ssid_scanning(true).unwrap(); // kick off an initial SSID scan, we'll always want this info regardless
     let mut scan_state = SsidScanState::Scanning;
@@ -143,12 +164,11 @@ pub(crate) fn connection_manager(sid: xous::SID, activity_interval: Arc<AtomicU3
     send_message(run_cid, Message::new_scalar(PumpOp::Pump.to_usize().unwrap(), 0, 0, 0, 0)).expect("couldn't kick off next poll");
     loop {
         let mut msg = xous::receive_message(sid).unwrap();
-        log::debug!("got msg: {:?}", msg);
+        log::trace!("got msg: {:?}", msg);
         match FromPrimitive::from_usize(msg.body.id()) {
-            Some(ConnectionManagerOpcode::SuspendResume) => xous::msg_scalar_unpack!(msg, token, _, _, _, {
-                // for now, nothing to do to prepare for suspend...
-                susres.suspend_until_resume(token).expect("couldn't execute suspend/resume");
-                // on resume, check with the EC and see where the link state ended up
+            Some(ConnectionManagerOpcode::SuspendResume) => xous::msg_scalar_unpack!(msg, _, _, _, _, {
+                // this doesn't follow the usual "suspender" pattern. In fact, we don't do anything special on suspend;
+                // however, on resume, check with the EC and see where the link state ended up.
                 let (res_linkstate, _res_dhcpstate) = com.wlan_sync_state().unwrap();
                 match res_linkstate {
                     LinkState::Connected => {
