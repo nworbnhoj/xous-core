@@ -97,7 +97,7 @@ pub enum SendMessageType {
 }
 
 // a structure for defining the setup of a Websocket.
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug)]
 pub struct WebsocketConfig {
     /** optional ca for a TLS connection - fallback to tcp */
     pub certificate_authority: Option<xous_ipc::String<CA_LEN>>,

@@ -18,7 +18,7 @@ num-traits = {version = "0.2.14", default-features = false}
 embedded-websocket = { version = "0.8.0" }
 xous-ipc = {path="../../xous-ipc"}
 url = "2.2.2"
-libsignal-service = { path = "../../../whisperfish/libsignal-service-rs/libsignal-service" }
+#libsignal-service = { path = "../../../whisperfish/libsignal-service-rs/libsignal-service", features = ["u32_backend"]}
 rustls = "0.20.4"
 rustls-connector = "0.16.1"
 rand = "0.8.5"
@@ -34,6 +34,6 @@ utralib = { path = "../../utralib"}
 
 [features]
 default = []
-ws_test  = []
+ws_test = []
 
 
