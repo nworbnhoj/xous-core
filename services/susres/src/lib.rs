@@ -14,14 +14,12 @@ use num_traits::{ToPrimitive, FromPrimitive};
 pub struct Susres {
     conn: CID,
     suspend_cb_sid: Option<xous::SID>,
-    execution_gate_conn: CID,
 }
 impl Susres {
     #[cfg(any(target_os = "none", target_os = "xous"))]
     pub fn new(order: Option<SuspendOrder>, xns: &xous_names::XousNames, cb_discriminant: u32, cid: CID) -> Result<Self, xous::Error> {
         REFCOUNT.fetch_add(1, Ordering::Relaxed);
         let conn = xns.request_connection_blocking(api::SERVER_NAME_SUSRES).expect("Can't connect to SUSRES");
-        let execution_gate_conn = xns.request_connection_blocking(api::SERVER_NAME_EXEC_GATE).expect("Can't connect to the execution gate");
 
         let sid = xous::create_server().unwrap();
         let sid_tuple = sid.to_u32();
@@ -39,7 +37,6 @@ impl Susres {
         Ok(Susres {
             conn,
             suspend_cb_sid: Some(sid),
-            execution_gate_conn,
         })
     }
     // suspend/resume is not implemented in hosted mode, and will break if you try to do it.
@@ -53,7 +50,6 @@ impl Susres {
         Ok(Susres {
             conn: 0,
             suspend_cb_sid: None,
-            execution_gate_conn: 0,
         })
     }
     pub fn conn(&self) -> CID { self.conn }
@@ -64,7 +60,6 @@ impl Susres {
         Ok(Susres {
             conn,
             suspend_cb_sid: None,
-            execution_gate_conn: 0,
         })
     }
 
@@ -79,15 +74,19 @@ impl Susres {
         if self.suspend_cb_sid.is_none() { // this happens if you created without a hook
             return Err(xous::Error::UseBeforeInit)
         }
-        log::trace!("telling the server we're ready to suspend");
+        log::debug!("token {} pid {} suspending", token, xous::process::id()); // <-- use this to debug s/r
+        xous::yield_slice();
         // first tell the susres server that we're ready to suspend
         send_message(self.conn,
             Message::new_scalar(Opcode::SuspendReady.to_usize().unwrap(), token, 0, 0, 0)
         ).map(|_|())?;
         log::trace!("blocking until suspend");
+
+        // sometime between here and when this next message unblocks, the power went out...
+
         // now block until we've resumed
-        send_message(self.execution_gate_conn,
-            Message::new_blocking_scalar(ExecGateOpcode::SuspendingNow.to_usize().unwrap(), 0, 0, 0, 0)
+        send_message(self.conn,
+            Message::new_blocking_scalar(Opcode::SuspendingNow.to_usize().unwrap(), 0, 0, 0, 0)
         ).map(|_|())?;
 
         let response = send_message(self.conn,
@@ -160,7 +159,7 @@ fn suspend_cb_server(sid0: usize, sid1: usize, sid2: usize, sid3: usize) {
         match FromPrimitive::from_usize(msg.body.id()) {
             Some(SuspendEventCallback::Event) => msg_scalar_unpack!(msg, cid, id, token, _, {
                 // directly pass the scalar message onto the CID with the ID memorized in the original hook
-                log::info!("PID {} has s/r token {}", xous::current_pid().unwrap().get(), token);
+                log::debug!("PID {} has s/r token {}", xous::current_pid().unwrap().get(), token); // <-- use this to debug s/r
                 send_message(cid as u32,
                     Message::new_scalar(id, token, 0, 0, 0)
                 ).unwrap();

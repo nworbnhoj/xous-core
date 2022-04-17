@@ -6,7 +6,7 @@
 mod murmur3;
 
 mod api;
-use api::{Opcode, ScalarHook, SuspendEventCallback, ExecGateOpcode};
+use api::{Opcode, ScalarHook, SuspendEventCallback};
 
 use num_traits::{ToPrimitive, FromPrimitive};
 use xous_ipc::Buffer;
@@ -530,35 +530,6 @@ pub fn timeout_thread(sid0: usize, sid1: usize, sid2: usize, sid3: usize) {
 }
 
 static SHOULD_RESUME: AtomicBool = AtomicBool::new(false);
-static RESUME_EXEC: AtomicBool = AtomicBool::new(false);
-pub fn execution_gate() {
-    let xns = xous_names::XousNames::new().unwrap();
-    let execgate_sid = xns.register_name(api::SERVER_NAME_EXEC_GATE, None).expect("can't register execution gate");
-    log::trace!("execution_gate registered with NS -- {:?}", execgate_sid);
-
-    loop {
-        let msg = xous::receive_message(execgate_sid).unwrap();
-        match FromPrimitive::from_usize(msg.body.id()) {
-            // the entire purpose of SupendingNow is to block the thread that sent the message, until we're ready to resume.
-            Some(ExecGateOpcode::SuspendingNow) => msg_blocking_scalar_unpack!(msg, _, _, _, _, {
-                println!("checking exec gate:");
-                while !RESUME_EXEC.load(Ordering::Relaxed) {
-                    println!("execution gate active");
-                    xous::yield_slice();
-                }
-                println!("execution is ungated!");
-                xous::return_scalar(msg.sender, 0).expect("couldn't return dummy message to unblock execution");
-            }),
-            Some(ExecGateOpcode::Drop) => {
-                break;
-            }
-            None => {
-                log::error!("received unknown opcode in execution_gate");
-            }
-        }
-    }
-    xous::destroy_server(execgate_sid).unwrap();
-}
 
 #[xous::xous_main]
 fn xmain() -> ! {
@@ -567,6 +538,9 @@ fn xmain() -> ! {
     let mut susres_hw = implementation::SusResHw::new();
 
     log_server::init_wait().unwrap();
+    // debugging note: it's actually easiest to debug using client-side hooks. Search for
+    // "<-- use this to debug s/r" in the lib.rs file and switch that to an "info" level
+    // and you will get a nice readout of caller PID + token lists.
     log::set_max_level(log::LevelFilter::Info);
     log::info!("my PID is {}", xous::process::id());
 
@@ -574,9 +548,6 @@ fn xmain() -> ! {
     // they're necessary because we kill IPC and thread comms as part of suspend
     // so this is the only way to debug what's going on.
     println!("App UART debug printing is on!");
-
-    // start up the execution gate
-    xous::create_thread_0(execution_gate).unwrap();
 
     let xns = xous_names::XousNames::new().unwrap();
     // unlimited connections allowed
@@ -600,6 +571,8 @@ fn xmain() -> ! {
 
     let mut suspend_subscribers = Vec::<ScalarCallback>::new();
     let mut current_op_order = crate::api::SuspendOrder::Early;
+
+    let mut gated_pids = Vec::<xous::MessageSender>::new();
     loop {
         let msg = xous::receive_message(susres_sid).unwrap();
         if reboot_requested {
@@ -631,6 +604,16 @@ fn xmain() -> ! {
                     let hookdata = buffer.to_original::<ScalarHook, _>().unwrap();
                     do_hook(hookdata, &mut suspend_subscribers);
                 },
+                Some(Opcode::SuspendingNow) => {
+                    if !suspend_requested {
+                        // this is harmless, it means a process' execution gate came a bit later than expected, so just ignore and tell it to resume
+                        // the execution gate is only requested until *after* a process has checked in and said it is ready to suspend, anyways.
+                        log::warn!("exec gate message received late, ignoring");
+                        xous::return_scalar(msg.sender, 0).expect("couldn't return dummy message to unblock execution");
+                    } else {
+                        gated_pids.push(msg.sender);
+                    }
+                },
                 Some(Opcode::SuspendReady) => msg_scalar_unpack!(msg, token, _, _, _, {
                     //log::trace!("suspendready with token {}", token);
                     if !suspend_requested {
@@ -647,11 +630,19 @@ fn xmain() -> ! {
                     }
                     scb.ready_to_suspend = true;
 
+                    // DEBUG NOTES:
+                    // "<-- use this to debug s/r" in the lib.rs file and switch that to an "info" level
+                    // in order to get the best-quality debug info (lib-side hook can give us caller PID)
+
+                    // also, note that llio's suspend call will map out the UART on suspend. If you want to
+                    // debug a kernel panic on resume, you must set the mux to 0, but then you lose
+                    // visibility on suspend once the llio triggers its suspend. If you want to debug suspend
+                    // order problems, set the mux to 1, but you lose visibility into KP on resume.
                     let mut all_ready = true;
                     for sub in suspend_subscribers.iter() {
                         if sub.order == current_op_order {
                             if !sub.ready_to_suspend {
-                                log::trace!("not ready: {}", sub.token);
+                                log::trace!("  -> NOT READY: {}", sub.token);
                                 all_ready = false;
                                 break;
                             }
@@ -663,6 +654,11 @@ fn xmain() -> ! {
                         timeout_pending = false;
                         // susres_hw.debug_delay(500); // let the messages print
                         susres_hw.do_suspend(false);
+
+                        // ---- power turns off ----
+                        // ---- time passes while we are asleep ----
+                        // ---- omg power came back! ---
+
                         // when do_suspend() returns, it means we've resumed
                         suspend_requested = false;
                         log_server::resume(); // log server is a special case, in order to avoid circular dependencies
@@ -671,7 +667,9 @@ fn xmain() -> ! {
                         }
                         // this now allows all other threads to commence
                         log::trace!("low-level resume done, restoring execution");
-                        RESUME_EXEC.store(true, Ordering::Relaxed);
+                        for pid in gated_pids.drain(..) {
+                            xous::return_scalar(pid, 0).expect("couldn't return dummy message to unblock execution");
+                        }
                         susres_hw.restore_wfi();
                     } else if all_ready {
                         log::debug!("finished with {:?} going to next round", current_op_order);
@@ -693,6 +691,11 @@ fn xmain() -> ! {
                     }
                 }),
                 Some(Opcode::SuspendRequest) => {
+                    /*
+                    log::info!("registered suspend listeners:");
+                    for sub in suspend_subscribers.iter() {
+                        log::info!("{:?}", sub);
+                    }*/
                     // if the 2-second timeout is still pending from a previous suspend, deny the suspend request.
                     // ...just don't suspend that quickly after resuming???
                     if allow_suspend && !timeout_pending {
@@ -700,7 +703,6 @@ fn xmain() -> ! {
                         suspend_requested = true;
                         // clear the resume gate
                         SHOULD_RESUME.store(false, Ordering::Relaxed);
-                        RESUME_EXEC.store(false, Ordering::Relaxed);
                         // clear the ready to suspend flag and failed to suspend flag
                         for sub in suspend_subscribers.iter_mut() {
                             sub.ready_to_suspend = false;
@@ -739,6 +741,11 @@ fn xmain() -> ! {
                         // susres_hw.debug_delay(500); // let the messages print
                         // force a suspend
                         susres_hw.do_suspend(true);
+
+                        // ---- power turns off ----
+                        // ---- time passes while we are asleep ----
+                        // ---- omg power came back! ---
+
                         // when do_suspend() returns, it means we've resumed
                         suspend_requested = false;
                         log_server::resume(); // log server is a special case, in order to avoid circular dependencies
@@ -747,7 +754,10 @@ fn xmain() -> ! {
                         } else {
                             log::error!("We forced a suspend, but the bootloader is claiming we did a clean suspend. Internal state may be inconsistent.");
                         }
-                        RESUME_EXEC.store(true, Ordering::Relaxed);
+                        for pid in gated_pids.drain(..) {
+                            xous::return_scalar(pid, 0).expect("couldn't return dummy message to unblock execution");
+                        }
+                        susres_hw.restore_wfi();
                     } else {
                         log::trace!("clean suspend timeout received, ignoring");
                         // this means we did a clean suspend, we've resumed, and the timeout came back after the resume
@@ -819,6 +829,26 @@ fn unhook(cb_conns: &mut Vec::<ScalarCallback>) {
 fn send_event(cb_conns: &Vec::<ScalarCallback>, order: crate::api::SuspendOrder) -> (bool, crate::api::SuspendOrder) {
     let mut at_least_one_event_sent = false;
     log::info!("Sending suspend to {:?} stage", order);
+    /*
+    // abortive attempt to get suspend to shut down the system. Doesn't work, results in a panic because too many messages are still moving around.
+    #[cfg(not(any(target_os = "none", target_os = "xous")))]
+    {
+        if order == crate::api::SuspendOrder::Last {
+            let tt_conn = xous::connect(xous::SID::from_bytes(b"ticktimer-server").unwrap()).unwrap();
+            send_message(
+                tt_conn,
+                xous::Message::new_blocking_scalar(
+                    1,
+                    1000,
+                    0,
+                    0,
+                    0,
+                ),
+            )
+            .map(|_| ()).unwrap();
+            xous::rsyscall(xous::SysCall::Shutdown).expect("unable to quit");
+        }
+    }*/
     for scb in cb_conns.iter() {
         if scb.order == order {
             at_least_one_event_sent = true;
