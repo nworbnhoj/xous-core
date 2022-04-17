@@ -107,7 +107,8 @@ fn xmain() -> ! {
                         &mut assets.ws_stream,
                     ),
                     None => {
-                        buf.replace(drop("Websocket assets not in list")).expect("Failed to replace return buffer");
+                        buf.replace(drop("Websocket assets not in list"))
+                            .expect("failed replace buffer");
                         continue;
                     }
                 };
@@ -131,7 +132,7 @@ fn xmain() -> ! {
                     Ok(()) => log::info!("Sent close handshake"),
                     Err(e) => {
                         let hint = format!("Failed to send close handshake {:?}", e);
-                        buf.replace(drop(&hint)).expect("failed to replace return buffer");
+                        buf.replace(drop(&hint)).expect("failed replace buffer");
                         continue;
                     }
                 };
@@ -142,7 +143,8 @@ fn xmain() -> ! {
                     Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap())
                 };
                 if store.contains_key(&pid) {
-                    buf.replace(drop("WebSocket already open")).expect("failed to replace return buffer");
+                    buf.replace(drop("WebSocket already open"))
+                        .expect("failed replace buffer");
                     continue;
                 }
                 let ws_config = buf.to_original::<WebsocketConfig, _>().unwrap();
@@ -153,7 +155,10 @@ fn xmain() -> ! {
                 let mut url = Url::parse(base_url).expect("valid base_url");
                 let path = ws_config.path.as_str().expect("path utf-8 decode error");
                 url = url.join(path).expect("valid path");
-                url.set_scheme("wss").expect("valid https base url");
+                match ws_config.certificate_authority.is_some() {
+                    true => url.set_scheme("wss").expect("fail set url scheme"),
+                    false => url.set_scheme("ws").expect("fail set url scheme"),
+                };
 
                 log::trace!("Will start websocket at {:?}", url.as_str());
 
@@ -190,7 +195,7 @@ fn xmain() -> ! {
                     Ok(tcp_stream) => tcp_stream,
                     Err(e) => {
                         let hint = format!("Failed to open TCP Stream {:?}", e);
-                        buf.replace(drop(&hint)).expect("Failed to replace return buffer");
+                        buf.replace(drop(&hint)).expect("failed replace buffer");
                         continue;
                     }
                 };
@@ -210,7 +215,7 @@ fn xmain() -> ! {
                         },
                         Err(e) => {
                             let hint = format!("Unable to connect WebSocket {:?}", e);
-                            buf.replace(drop(&hint)).expect("Failed to replace return buffer");
+                            buf.replace(drop(&hint)).expect("failed replace buffer");
                             continue;
                         }
                     };
@@ -228,7 +233,7 @@ fn xmain() -> ! {
                         }
                         Err(e) => {
                             let hint = format!("Failed to complete TLS handshake {:?}", e);
-                            buf.replace(drop(&hint)).expect("Failed to replace return buffer");
+                            buf.replace(drop(&hint)).expect("failed replace buffer");
                             continue;
                         }
                     };
@@ -242,7 +247,7 @@ fn xmain() -> ! {
                             },
                             Err(e) => {
                                 let hint = format!("Unable to connect WebSocket {:?}", e);
-                                buf.replace(drop(&hint)).expect("Failed to replace return buffer");
+                                buf.replace(drop(&hint)).expect("failed replace buffer");
                                 continue;
                             }
                         };
@@ -263,7 +268,7 @@ fn xmain() -> ! {
                 );
 
                 let response = api::Return::SubProtocol(sub_protocol);
-                buf.replace(response).expect("Failed to replace return buffer");
+                buf.replace(response).expect("failed replace buffer");
             }
             Some(Opcode::Poll) => {
                 // Check each websocket for an inbound frame to read and send to the cid
@@ -315,7 +320,8 @@ fn xmain() -> ! {
                         &mut assets.ws_stream,
                     ),
                     None => {
-                        buf.replace(drop("Websocket assets not in list")).expect("Failed to replace return buffer");
+                        buf.replace(drop("Websocket assets not in list"))
+                            .expect("failed replace buffer");
                         continue;
                     }
                 };
@@ -324,7 +330,7 @@ fn xmain() -> ! {
                     Some(SendMessageType::Binary) => MessageType::Binary,
                     invalid => {
                         let hint = format!("Invalid value SendMessageType: {:?}", invalid);
-                        buf.replace(drop(&hint)).expect("Failed to replace return buffer");
+                        buf.replace(drop(&hint)).expect("failed replace buffer");
                         continue;
                     }
                 };
@@ -349,7 +355,7 @@ fn xmain() -> ! {
                     Ok(()) => log::info!("Websocket frame sent"),
                     Err(e) => {
                         let hint = format!("failed to send Websocket frame {:?}", e);
-                        buf.replace(drop(&hint)).expect("Failed to replace return buffer");
+                        buf.replace(drop(&hint)).expect("failed replace buffer");
                         continue;
                     }
                 };
