@@ -148,20 +148,16 @@ fn xmain() -> ! {
                     continue;
                 }
                 let ws_config = buf.to_original::<WebsocketConfig, _>().unwrap();
-                let base_url = ws_config
-                    .base_url
-                    .as_str()
-                    .expect("base_url utf-8 decode error");
-                let mut url = Url::parse(base_url).expect("valid base_url");
+
+                // construct url from ws_config
+                let url = ws_config.base_url.as_str().expect("url utf-8 decode fail");
                 let path = ws_config.path.as_str().expect("path utf-8 decode error");
+                let mut url = Url::parse(url).expect("invalid base_url");
                 url = url.join(path).expect("valid path");
                 match ws_config.certificate_authority.is_some() {
                     true => url.set_scheme("wss").expect("fail set url scheme"),
                     false => url.set_scheme("ws").expect("fail set url scheme"),
                 };
-
-                log::trace!("Will start websocket at {:?}", url.as_str());
-
                 if ws_config.use_credentials {
                     let login = ws_config.login.as_str().expect("login utf-8 decode error");
                     let password = ws_config
@@ -174,7 +170,7 @@ fn xmain() -> ! {
                 }
                 let websocket_options = WebSocketOptions {
                     path: &path,
-                    host: &base_url,
+                    host: &url.host_str().unwrap(),
                     origin: "",
                     sub_protocols: None,
                     additional_headers: None,
@@ -188,6 +184,7 @@ fn xmain() -> ! {
                     &mut ws_client,
                 );
 
+                log::trace!("Will start websocket at {:?}", url.host_str().unwrap());
                 // Create a TCP Stream between this device and the remote Server
                 let target = format!("{}:{}", url.host_str().unwrap(), url.port().unwrap());
                 log::info!("Opening TCP connection to {:?}", target);
@@ -226,17 +223,18 @@ fn xmain() -> ! {
                         .as_str()
                         .expect("certificate_authority utf-8 decode error");
                     let tls_connector = RustlsConnector::from(ssl_config(ca));
-                    let tls_stream = match tls_connector.connect(base_url, tcp_stream) {
-                        Ok(tls_stream) => {
-                            log::info!("TLS connected to {:?}", base_url);
-                            tls_stream
-                        }
-                        Err(e) => {
-                            let hint = format!("Failed to complete TLS handshake {:?}", e);
-                            buf.replace(drop(&hint)).expect("failed replace buffer");
-                            continue;
-                        }
-                    };
+                    let tls_stream =
+                        match tls_connector.connect(url.host_str().unwrap(), tcp_stream) {
+                            Ok(tls_stream) => {
+                                log::info!("TLS connected to {:?}", url.host_str().unwrap());
+                                tls_stream
+                            }
+                            Err(e) => {
+                                let hint = format!("Failed to complete TLS handshake {:?}", e);
+                                buf.replace(drop(&hint)).expect("failed replace buffer");
+                                continue;
+                            }
+                        };
                     // Initiate a websocket opening handshake over the TLS Stream
                     let wss_stream = Some(WsStream(tls_stream));
                     sub_protocol =
