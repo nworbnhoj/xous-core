@@ -11,16 +11,58 @@
         "en": "registration submitted",
         "en-tts": "registration submitted"
     },
-    "signal.register.phone.modal.name": {
-        "en": "Phone Number",
+    "signal.register.phone.modal.prompt": {
+        "en": "Phone number",
         "en-tts": "phone number"
     },
-    "signal.register.phone.modal.top": {
-        "en": "The telephone number to register with the Signal servers",
-        "en-tts": "The telephone number to register with the Signal servers"
+    "signal.register.phone.modal.help": {
+        "en": "E.164 format (+61123457890)",
+        "en-tts": "sfor example +61123457890"
     },
-    "signal.register.phone.modal.bottom": {
-        "en": "In E.164 format (+61123457890)",
-        "en-tts": "In E.164 format, for example +61123457890"
+    "signal.register.password.modal.prompt": {
+        "en": "A password for the Signal account.",
+        "en-tts": "A password for the Signal account."
+    },
+    "signal.register.password.modal.help": {
+        "en": "length 8-20, including a letter, a digit and one of !@#%&",
+        "en-tts": "length 8-20, including a letter, a digit and one of !@#%&"
+    },
+    "signal.register.captcha.modal.prompt": {
+        "en": "Scan qr-code and solve captcha on another device.",
+        "en-tts": "Scan qr-code and solve captcha on another device."
+    },
+    "signal.register.validation.modal.prompt": {
+        "en": "Signal validation code.",
+        "en-tts": "Signal validation code."
+    },
+    "signal.register.mode.modal.prompt": {
+        "en": "Verify with ...",
+        "en-tts": "Verify with."
+    },
+    "signal.register.mode.modal.sms": {
+        "en": "sms",
+        "en-tts": "sms"
+    },
+    "signal.register.mode.modal.voice": {
+        "en": "voice",
+        "en-tts": "voice"
+    },
+    "signal.register.verification.modal.prompt": {
+        "en": "verification code",
+        "en-tts": "verification code"
+    },
+    "signal.register.verification.modal.help": {
+        "en": "4 character code from Signal",
+        "en-tts": "4 character code from Signal"
+    },
+    "signal.register.success": {
+        "en": "Signal registration complete.",
+        "en-tts": "Signal registration complete."
+    },
+    "signal.register.fail": {
+        "en": "Signal registration failed.",
+        "en-tts": "Signal registration failed."
     }
 }
+
+
