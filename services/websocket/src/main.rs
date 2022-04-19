@@ -28,7 +28,7 @@ use ws::{WebSocketClient, WebSocketOptions};
 use xous::CID;
 use xous_ipc::Buffer;
 
-#[derive(Deref, DerefMut)]
+#[derive(Clone, Copy, Debug, Deref, DerefMut)]
 struct WsStream<T: Read + Write>(T);
 
 impl<T: Read + Write> ws::framer::Stream<Error> for WsStream<T> {
@@ -171,10 +171,11 @@ fn xmain() -> ! {
                 let websocket_options = WebSocketOptions {
                     path: &path,
                     host: &url.host_str().unwrap(),
-                    origin: "",
+                    origin: &url.origin().unicode_serialization(),
                     sub_protocols: None,
                     additional_headers: None,
                 };
+
                 let mut ws_client = WebSocketClient::new_client(rand::thread_rng());
                 zero(&mut vec![&mut read_buf[..], &mut write_buf[..]]);
                 let mut framer = Framer::new(
@@ -198,14 +199,13 @@ fn xmain() -> ! {
                 };
                 log::info!("TCP connected to {:?}", target);
 
-                let ws_stream = None;
-                let wss_stream = None;
+                let mut ws_stream = None;
+                let mut wss_stream = None;
                 let sub_protocol: xous_ipc::String<HINT_LEN>;
                 if ws_config.certificate_authority.is_none() {
                     // Initiate a websocket opening handshake over the TCP Stream
-                    let ws_stream = Some(WsStream(tcp_stream));
-                    sub_protocol = match framer.connect(&mut ws_stream.unwrap(), &websocket_options)
-                    {
+                    let mut stream = WsStream(tcp_stream);
+                    sub_protocol = match framer.connect(&mut stream, &websocket_options) {
                         Ok(opt) => match opt {
                             Some(sp) => xous_ipc::String::from_str(sp.to_string()),
                             None => xous_ipc::String::from_str(""),
@@ -216,6 +216,7 @@ fn xmain() -> ! {
                             continue;
                         }
                     };
+                    ws_stream = Some(stream);
                 } else {
                     // Create a TLS connection to the remote Server on the TCP Stream
                     let ca = ws_config.certificate_authority.unwrap();
@@ -236,19 +237,19 @@ fn xmain() -> ! {
                             }
                         };
                     // Initiate a websocket opening handshake over the TLS Stream
-                    let wss_stream = Some(WsStream(tls_stream));
-                    sub_protocol =
-                        match framer.connect(&mut wss_stream.unwrap(), &websocket_options) {
-                            Ok(opt) => match opt {
-                                Some(sp) => xous_ipc::String::from_str(sp.to_string()),
-                                None => xous_ipc::String::from_str(""),
-                            },
-                            Err(e) => {
-                                let hint = format!("Unable to connect WebSocket {:?}", e);
-                                buf.replace(drop(&hint)).expect("failed replace buffer");
-                                continue;
-                            }
-                        };
+                    let mut stream = WsStream(tls_stream);
+                    sub_protocol = match framer.connect(&mut stream, &websocket_options) {
+                        Ok(opt) => match opt {
+                            Some(sp) => xous_ipc::String::from_str(sp.to_string()),
+                            None => xous_ipc::String::from_str(""),
+                        },
+                        Err(e) => {
+                            let hint = format!("Unable to connect WebSocket {:?}", e);
+                            buf.replace(drop(&hint)).expect("failed replace buffer");
+                            continue;
+                        }
+                    };
+                    wss_stream = Some(stream);
                 }
 
                 log::info!("WebSocket connected with: {:?}", sub_protocol);
@@ -266,6 +267,7 @@ fn xmain() -> ! {
                 );
 
                 let response = api::Return::SubProtocol(sub_protocol);
+
                 buf.replace(response).expect("failed replace buffer");
             }
             Some(Opcode::Poll) => {
@@ -512,7 +514,7 @@ fn poll<E, R, S, T>(
         let frame: [u8; WEBSOCKET_BUFFER_LEN] = frame
             .try_into()
             .expect("websocket frame too large for buffer");
-        let buf = Buffer::into_buf(Return::Frame(frame))
+        let buf = Buffer::into_buf(Frame { bytes: frame })
             .expect("failed to serialize websocket frame into buffer");
         buf.send(cid, opcode)
             .expect("failed to send websocket frame");

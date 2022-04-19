@@ -83,7 +83,7 @@ pub mod local {
         let ws_cid = match open_websocket(ca) {
             Ok(cid) => cid,
             Err(e) => {
-                log::info!("Failed to open websocket over tls {:?}", e);
+                log::info!("Failed to open websocket {:?}", e);
                 return;
             }
         };
@@ -96,8 +96,7 @@ pub mod local {
                     let outbound: xous_ipc::String<TEST_MSG_SIZE> = xous_ipc::String::from_str(
                         "send this message outbound from test_app via websocket",
                     );
-                    let mut buf =
-                        Buffer::into_buf(outbound).expect("failed put msg in buffer");
+                    let mut buf = Buffer::into_buf(outbound).expect("failed put msg in buffer");
                     buf.lend_mut(ws_cid, Opcode::Send.to_u32().unwrap())
                         .map(|_| ())
                         .expect("failed to send via websocket");
@@ -143,15 +142,15 @@ pub mod local {
         let config = WebsocketConfig {
             certificate_authority: certificate_authority,
             base_url: xous_ipc::String::from_str("http://127.0.0.1:1337"),
-            path: xous_ipc::String::from_str(""),
+            path: xous_ipc::String::from_str("/chat"),
             use_credentials: false,
             login: xous_ipc::String::from_str(""),
             password: xous_ipc::String::from_str(""),
             cid: cid,
             opcode: TestOpcode::Receive.to_u32().unwrap(),
-        }; 
-        log::info!("opening websocket with {:?}", config);        
-        
+        };
+        log::info!("opening websocket with {:?}", config);
+
         // Request the websocket_client_service to open a websocket with WebsocketConfig
         let mut buf = Buffer::into_buf(config)
             .or(Err(xous::Error::InternalError))
@@ -161,7 +160,6 @@ pub mod local {
             .expect("request to open websocket failed");
 
         match buf.to_original::<Return, _>().unwrap() {
-            Return::Frame(_frame) => Err(Error::new(ErrorKind::Other, "invalid Return type")),
             Return::SubProtocol(protocol) => {
                 assert_eq!(protocol, protocol); // TODO test sub_protocol
                 Ok(ws_cid)
