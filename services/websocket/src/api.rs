@@ -110,6 +110,7 @@ pub struct WebsocketConfig {
     /** a path to apend to the url */
     pub path: xous_ipc::String<PATH_LEN>,
     /** true to authenticate */
+    pub sub_protocols: [xous_ipc::String<SUB_PROTOCOL_LEN>; 3],
     pub use_credentials: bool,
     /** authentication username */
     pub login: xous_ipc::String<LOGIN_LEN>,

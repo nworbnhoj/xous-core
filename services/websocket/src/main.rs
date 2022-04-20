@@ -158,11 +158,16 @@ fn xmain() -> ! {
                         .append_pair("login", &login)
                         .append_pair("password", &password);
                 }
+                let protocols = [
+                    ws_config.sub_protocols[0].as_str().unwrap(),
+                    ws_config.sub_protocols[1].as_str().unwrap(),
+                    ws_config.sub_protocols[2].as_str().unwrap(),
+                ];
                 let websocket_options = WebSocketOptions {
                     path: &path,
                     host: &url.host_str().unwrap(),
                     origin: &url.origin().unicode_serialization(),
-                    sub_protocols: None,
+                    sub_protocols: Some(&protocols),
                     additional_headers: None,
                 };
 
@@ -191,7 +196,7 @@ fn xmain() -> ! {
 
                 let mut ws_stream = None;
                 let mut wss_stream = None;
-                let sub_protocol: xous_ipc::String<HINT_LEN>;
+                let sub_protocol: xous_ipc::String<SUB_PROTOCOL_LEN>;
                 if ws_config.certificate_authority.is_none() {
                     // Initiate a websocket opening handshake over the TCP Stream
                     let mut stream = WsStream(tcp_stream);
@@ -242,7 +247,7 @@ fn xmain() -> ! {
                     wss_stream = Some(stream);
                 }
 
-                log::info!("WebSocket connected with: {:?}", sub_protocol);
+                log::info!("WebSocket connected with protocol: {:?}", sub_protocol);
 
                 // Store the open websocket indexed by the calling pid
                 store.insert(

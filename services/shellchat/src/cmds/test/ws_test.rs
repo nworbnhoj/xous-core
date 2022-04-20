@@ -1,14 +1,13 @@
 mod ws_test_server;
 
-use websocket::{Opcode, Return, WebsocketConfig, SERVER_NAME_WEBSOCKET, CA_LEN};
 use num_traits::{FromPrimitive, ToPrimitive};
-use std::io::{Error, ErrorKind};
 use std::thread;
-use xous::CID;
+use websocket::{Opcode, Return, WebsocketConfig, CA_LEN, SERVER_NAME_WEBSOCKET};
 use xous_ipc::Buffer;
 
 const WS_TEST_NAME: &str = "_ws_test_";
 const TEST_MSG_SIZE: usize = 128;
+const PROTOCOL: &str = "echo";
 
 #[derive(num_derive::FromPrimitive, num_derive::ToPrimitive, Debug)]
 enum TestOpcode {
@@ -80,12 +79,16 @@ fn test_app(certificate_authority: Option<xous_ipc::String<CA_LEN>>) {
     let ws_cid = xns
         .request_connection_blocking(SERVER_NAME_WEBSOCKET)
         .expect("Cannot connect to websocket server");
-
     let config = WebsocketConfig {
         certificate_authority: certificate_authority,
         base_url: xous_ipc::String::from_str("http://127.0.0.1:1337"),
         path: xous_ipc::String::from_str("/test"),
         use_credentials: false,
+        sub_protocols: [
+            xous_ipc::String::from_str(PROTOCOL),
+            xous_ipc::String::new(),
+            xous_ipc::String::new(),
+        ],
         login: xous_ipc::String::from_str(""),
         password: xous_ipc::String::from_str(""),
         cid: cid,
@@ -102,11 +105,12 @@ fn test_app(certificate_authority: Option<xous_ipc::String<CA_LEN>>) {
         .expect("request to open websocket failed");
 
     match buf.to_original::<Return, _>().unwrap() {
-        Return::SubProtocol(protocol) => log::info!("Websocket protocol: {:?}", protocol),
-        Return::Failure(hint) => log::info!("failed to retrieve protocol: {:?}", hint),
+        Return::SubProtocol(protocol) => match protocol.to_str() {
+            "echo" => log::info!("Opened WebSocket with protocol: {:?}", protocol.to_str()),
+            _ => log::info!("FAIL: protocol != echo"),
+        },
+        Return::Failure(hint) => log::info!("FAIL: on retrieve protocol: {:?}", hint),
     };
-    //assert_eq!(protocol, protocol); // TODO test sub_protocol
-    log::info!("Opened Websocket OK");
 
     loop {
         let mut msg = xous::receive_message(sid).unwrap();
@@ -134,8 +138,8 @@ fn test_app(certificate_authority: Option<xous_ipc::String<CA_LEN>>) {
             }
             Some(TestOpcode::Quit) => {
                 log::info!("Received TestOpcode::Quit");
-                break
-            },
+                break;
+            }
             None => {
                 log::error!("couldn't convert opcode: {:?}", msg);
             }
@@ -150,4 +154,3 @@ fn test_app(certificate_authority: Option<xous_ipc::String<CA_LEN>>) {
     .expect("couldn't send test_app quit");
     log::info!("Closed websocket OK");
 }
-
