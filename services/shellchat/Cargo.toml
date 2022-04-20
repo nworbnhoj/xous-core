@@ -37,6 +37,9 @@ net = {path="../net"}
 dns = {path="../dns"}
 pddb = {path="../pddb"}
 modals = {path="../modals"}
+websocket = {path="../websocket"}
+embedded-websocket = { version = "0.8.0" }
+httparse = "1.7.0"
 
 tts-frontend = {path="../tts"}
 locales = {path = "../../locales"}

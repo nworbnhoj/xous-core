@@ -57,18 +57,18 @@ impl From<Utf8Error> for WebServerError {
 pub fn main() -> std::io::Result<()> {
     let addr = "127.0.0.1:1337";
     let listener = TcpListener::bind(addr)?;
-    println!("Listening on: {}", addr);
+    log::info!("Listening on: {}", addr);
 
     // accept connections and process them serially
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
                 thread::spawn(|| match handle_client(stream) {
-                    Ok(()) => println!("Connection closed"),
-                    Err(e) => println!("Error: {:?}", e),
+                    Ok(()) => log::info!("Connection closed"),
+                    Err(e) => log::info!("Error: {:?}", e),
                 });
             }
-            Err(e) => println!("Failed to establish a connection: {}", e),
+            Err(e) => log::info!("Failed to establish a connection: {}", e),
         }
     }
 
@@ -76,7 +76,7 @@ pub fn main() -> std::io::Result<()> {
 }
 
 fn handle_client(mut stream: TcpStream) -> Result<(), WebServerError> {
-    println!("Client connected {}", stream.peer_addr()?);
+    log::info!("Client connected {}", stream.peer_addr()?);
     let mut read_buf = [0; 4000];
     let mut read_cursor = 0;
 
@@ -94,27 +94,22 @@ fn handle_client(mut stream: TcpStream) -> Result<(), WebServerError> {
 
         // complete the opening handshake with the client
         framer.accept(&mut stream, &websocket_context)?;
-        println!("Websocket connection opened");
+        log::info!("Websocket connection opened");
 
         // read websocket frames
-        while let result = framer.read_text(&mut stream, &mut frame_buf)? {
-            match result {
-                Some(text) => {
-                    println!("Received: {}", text);
+        while let text = framer.read_text(&mut stream, &mut frame_buf)? {
+            log::info!("Received: {}", text.unwrap());
 
-                    // send the text back to the client
-                    framer.write(
-                        &mut stream,
-                        WebSocketSendMessageType::Text,
-                        true,
-                        text.as_bytes(),
-                    )?
-                }
-                None => continue,
-            }
+            // send the text back to the client
+            framer.write(
+                &mut stream,
+                WebSocketSendMessageType::Text,
+                true,
+                text.unwrap().as_bytes(),
+            );
         }
 
-        println!("Closing websocket connection");
+        log::info!("Closing websocket connection");
         Ok(())
     } else {
         Ok(())
@@ -163,7 +158,7 @@ fn handle_non_websocket_http_request(
     stream: &mut TcpStream,
     path: Option<&str>,
 ) -> Result<(), WebServerError> {
-    println!("Received file request: {:?}", path);
+    log::info!("Received file request: {:?}", path);
 
     match path {
         Some("/") => stream.write_all(&ROOT_HTML.as_bytes())?,
@@ -179,7 +174,7 @@ fn return_404_not_found(
     stream: &mut TcpStream,
     unknown_path: Option<&str>,
 ) -> Result<(), WebServerError> {
-    println!("Unknown path: {:?}", unknown_path);
+    log::info!("Unknown path: {:?}", unknown_path);
     let html = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
     stream.write_all(&html.as_bytes())?;
     Ok(())

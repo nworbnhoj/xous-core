@@ -4,8 +4,6 @@
 mod api;
 use api::*;
 
-mod ws_test;
-
 use derive_deref::*;
 use embedded_websocket as ws;
 use num_traits::{FromPrimitive, ToPrimitive};
@@ -67,14 +65,6 @@ fn xmain() -> ! {
         .expect("can't register server");
     log::trace!("registered with NS -- {:?}", ws_sid);
     let ws_cid = xous::connect(ws_sid).unwrap();
-
-    #[cfg(feature = "ws_test")]
-    /* Run a basic test on a tcp & tls connection to a local websocket server listening on 127.0.0.1:1337. */
-    {
-        let test_op = Opcode::Test.to_usize().unwrap();
-        xous::send_message(ws_cid, xous::Message::new_scalar(test_op, 0, 0, 0, 0))
-            .expect("failed to send Opcode::Test");
-    }
 
     // build a thread that emits a regular WebSocketOp::Tick to send a KeepAliveRequest
     spawn_tick_pump(ws_cid);
@@ -360,11 +350,6 @@ fn xmain() -> ! {
                     }
                 };
             }),
-            #[cfg(feature = "ws_test")]
-            Some(Opcode::Test) => {
-                let _pid = msg.sender.pid().unwrap();
-                ws_test::local::main(false);
-            }
             Some(Opcode::Tick) => {
                 let pid = msg.sender.pid().unwrap();
                 let (socket, wss_stream, ws_stream) = match store.get_mut(&pid) {

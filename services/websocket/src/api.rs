@@ -3,7 +3,7 @@
 /// data to forward to the CID provided when the websocket was opened.
 
 #[allow(dead_code)]
-pub(crate) const SERVER_NAME_WEBSOCKET: &str = "_Websocket Service_";
+pub const SERVER_NAME_WEBSOCKET: &str = "_Websocket Service_";
 
 use std::time::Duration;
 
@@ -16,7 +16,7 @@ pub(crate) const URL_LENGTH_LIMIT: usize = 200;
 /** limit on the byte length of error hint strings */
 pub(crate) const HINT_LEN: usize = 128;
 /** limit on the byte length of certificate authority strings */
-pub(crate) const CA_LEN: usize = 1402;
+pub const CA_LEN: usize = 1402;
 /** limit on the byte length of base-url strings */
 pub(crate) const BASEURL_LEN: usize = 128;
 /** limit on the byte length of url path strings */
@@ -26,7 +26,7 @@ pub(crate) const LOGIN_LEN: usize = 128;
 /** limit on the byte length of authentication password strings */
 pub(crate) const PASSWORD_LEN: usize = 128;
 /** limit on the byte length of websocket sub-protocol strings */
-pub(crate) const SUB_PROTOCOL_LEN: usize = 128;
+pub const SUB_PROTOCOL_LEN: usize = 24;
 
 /*
  WEBSOCKET_BUFFER_LEN can be as small as 14bytes, but presumably comes with a performance degradation.
@@ -38,7 +38,7 @@ pub(crate) const WEBSOCKET_BUFFER_LEN: usize = 4096;
 
 /// These opcodes can be called by anyone at any time
 #[derive(num_derive::FromPrimitive, num_derive::ToPrimitive, Debug)]
-pub(crate) enum Opcode {
+pub enum Opcode {
     /// Close an existing websocket.
     /// xous::Message::new_scalar(Opcode::Close, _, _, _, _)
     Close = 1,
@@ -83,13 +83,13 @@ pub(crate) enum Opcode {
 }
 
 #[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-pub(crate) enum Return {
+pub enum Return {
     SubProtocol(xous_ipc::String<SUB_PROTOCOL_LEN>),
     Failure(xous_ipc::String<HINT_LEN>),
 }
 
 #[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-pub(crate) struct Frame {
+pub struct Frame {
     pub bytes: [u8; WEBSOCKET_BUFFER_LEN],
 }
 

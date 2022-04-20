@@ -13,6 +13,8 @@ use num_traits::*;
 
 use std::time::Instant;
 
+mod ws_test;
+
 static AUDIO_OQC: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug)]
@@ -607,6 +609,9 @@ impl<'a> ShellCmdApi<'a> for Test {
                         }
                         write!(ret, "Ship mode request denied").unwrap();
                     }
+                }
+                "websocket" => {
+                    ws_test::local(false);                
                 }
                 _ => {
                     () // do nothing
