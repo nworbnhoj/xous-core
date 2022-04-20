@@ -22,7 +22,7 @@ use url::Url;
 use ws::framer::Framer;
 use ws::WebSocketCloseStatusCode as StatusCode;
 use ws::WebSocketSendMessageType as MessageType;
-use ws::{WebSocketClient, WebSocketOptions};
+use ws::{WebSocketClient, WebSocketOptions, WebSocketState};
 use xous::CID;
 use xous_ipc::Buffer;
 
@@ -247,21 +247,27 @@ fn xmain() -> ! {
                     wss_stream = Some(stream);
                 }
 
-                log::info!("WebSocket connected with protocol: {:?}", sub_protocol);
-
-                // Store the open websocket indexed by the calling pid
-                store.insert(
-                    pid,
-                    Assets {
-                        socket: ws_client,
-                        wss_stream: wss_stream,
-                        ws_stream: ws_stream,
-                        cid: ws_config.cid,
-                        opcode: ws_config.opcode,
-                    },
-                );
-
-                let response = api::Return::SubProtocol(sub_protocol);
+                let mut response = api::Return::SubProtocol(sub_protocol);
+                match framer.state() {
+                    WebSocketState::Open => {
+                        log::info!("WebSocket connected with protocol: {:?}", sub_protocol);
+                        // Store the open websocket indexed by the calling pid
+                        store.insert(
+                            pid,
+                            Assets {
+                                socket: ws_client,
+                                wss_stream: wss_stream,
+                                ws_stream: ws_stream,
+                                cid: ws_config.cid,
+                                opcode: ws_config.opcode,
+                            },
+                        );
+                    }
+                    _ => {
+                        let hint = format!("WebSocket failed to connect {:?}", framer.state());
+                        response = drop(&hint);
+                    }
+                }
 
                 buf.replace(response).expect("failed replace buffer");
             }
