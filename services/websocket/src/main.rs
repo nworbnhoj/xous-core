@@ -86,6 +86,7 @@ fn xmain() -> ! {
         let mut msg = xous::receive_message(ws_sid).unwrap();
         match FromPrimitive::from_usize(msg.body.id()) {
             Some(Opcode::Close) => {
+                log::info!("Websocket Opcode::Close");
                 let pid = msg.sender.pid().unwrap();
                 let mut buf = unsafe {
                     Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap())
@@ -125,10 +126,11 @@ fn xmain() -> ! {
                         buf.replace(drop(&hint)).expect("failed replace buffer");
                         continue;
                     }
-                };
+                };                
+                log::info!("Websocket Opcode::Close complete");
             }
             Some(Opcode::Open) => {
-                log::trace!("Websocket Opcode::Open");
+                log::info!("Websocket Opcode::Open");
                 let pid = msg.sender.pid().unwrap();
                 let mut buf = unsafe {
                     Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap())
@@ -271,9 +273,10 @@ fn xmain() -> ! {
                 }
 
                 buf.replace(response).expect("failed replace buffer");
-                log::trace!("Websocket Opcode::Open complete");
+                log::info!("Websocket Opcode::Open complete");
             }
             Some(Opcode::Poll) => {
+                log::info!("Websocket Opcode::Poll");
                 // Check each websocket for an inbound frame to read and send to the cid
                 for (_pid, assets) in &mut store {
                     zero(&mut vec![&mut read_buf[..], &mut write_buf[..]]);
@@ -310,9 +313,10 @@ fn xmain() -> ! {
                         },
                     };
                 }
+                log::info!("Websocket Opcode::Poll complete");
             }
             Some(Opcode::Send) => {
-                log::trace!("Websocket Opcode::Send");
+                log::info!("Websocket Opcode::Send");
                 let pid = msg.sender.pid().unwrap();
                 let mut buf = unsafe {
                     Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap())
@@ -337,16 +341,16 @@ fn xmain() -> ! {
                     invalid => {
                         let hint = format!("Invalid value SendMessageType: {:?}", invalid);
                         buf.replace(drop(&hint)).expect("failed replace buffer");
-                        continue;
+                       continue;
                     }
                 };
-*/
+                */
                 zero(&mut vec![&mut read_buf[..], &mut write_buf[..]]);
                 let mut framer =
                     Framer::new(&mut read_buf, &mut read_cursor, &mut write_buf, socket);
-                    
+
                 match framer.state() {
-                    WebSocketState::Open => {},
+                    WebSocketState::Open => {}
                     _ => {
                         let hint = format!("WebSocket DOA {:?}", framer.state());
                         buf.replace(drop(&hint)).expect("failed replace buffer");
@@ -374,9 +378,31 @@ fn xmain() -> ! {
                         continue;
                     }
                 };
-                log::trace!("Websocket Opcode::Send complete");
+                log::info!("Websocket Opcode::Send complete");
+            }
+            Some(Opcode::State) => {
+                log::info!("Websocket Opcode::State");
+                let mut pid = msg.sender.pid().unwrap();
+                match store.get_mut(&pid) {
+                    Some(assets) => {
+                        zero(&mut vec![&mut read_buf[..], &mut write_buf[..]]);
+                        let mut framer = Framer::new(
+                            &mut read_buf,
+                            &mut read_cursor,
+                            &mut write_buf,
+                            &mut assets.socket,
+                        );
+
+                        if framer.state() == WebSocketState::Open {
+                            xous::return_scalar(msg.sender, 1).expect("failed to return WebSocketState");
+                        }
+                    }
+                    None => xous::return_scalar(msg.sender, 0).expect("failed to return WebSocketState"),
+                };                
+                log::info!("Websocket Opcode::State complete");
             }
             Some(Opcode::Tick) => {
+                log::info!("Websocket Opcode::Tick");
                 let pid = msg.sender.pid().unwrap();
                 let (socket, wss_stream, ws_stream) = match store.get_mut(&pid) {
                     Some(assets) => (
@@ -418,17 +444,19 @@ fn xmain() -> ! {
                         continue;
                     }
                 };
-
-                log::info!("Websocket keep-alive request sent");
+    
+                log::info!("Websocket Opcode::Tick complete");
             }
 
             Some(Opcode::Quit) => {
+                log::info!("Websocket Opcode::Quit");
                 log::warn!("got quit!");
                 let close_op = Opcode::Close.to_usize().unwrap();
                 for (_pid, assets) in &mut store {
                     xous::send_message(assets.cid, xous::Message::new_scalar(close_op, 0, 0, 0, 0))
                         .expect("couldn't send Websocket poll");
                 }
+                log::info!("Websocket Opcode::Quit complete");
                 break;
             }
             None => {

@@ -66,12 +66,10 @@ pub enum Opcode {
     Poll,
     /// send a websocket frame
     Send,
-    #[cfg(feature = "ws_test")]
-    /// Run a local websocket test
-    /// On startup the websocket service will run a basic test on a tcp & tls connection to a local
-    /// websocket test server server established to listen on 127.0.0.1:1337. Do not run this option
-    /// in production.
-    Test,
+    /// Return the current State of the websocket
+    /// 1=Open, 0=notOpen
+    /// xous::Message::new_scalar(Opcode::State, _, _, _, _)
+    State,
     /// Send a KeepAliveRequest.
     /// An independent background thread is spawned to pump a regular Tick (KEEPALIVE_TIMEOUT_SECONDS)
     /// so there is normally no need to call this Opcode.
