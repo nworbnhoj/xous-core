@@ -3,10 +3,12 @@ mod ws_test_server;
 use num_traits::{FromPrimitive, ToPrimitive};
 use std::thread;
 use websocket::{Opcode, Return, WebsocketConfig, CA_LEN, SERVER_NAME_WEBSOCKET};
+use xous::send_message;
+use xous::Message;
 use xous_ipc::Buffer;
 
 const WS_TEST_NAME: &str = "_ws_test_";
-const TEST_MSG_SIZE: usize = 128;
+const TEST_MSG_SIZE: usize = 32;
 const PROTOCOL: &str = "echo";
 
 #[derive(num_derive::FromPrimitive, num_derive::ToPrimitive, Debug)]
@@ -94,7 +96,7 @@ fn test_app(certificate_authority: Option<xous_ipc::String<CA_LEN>>) {
         cid: cid,
         opcode: TestOpcode::Receive.to_u32().unwrap(),
     };
-    log::info!("Opening websocket with {:?}", config);
+    log::info!("Opening websocket with {:#?}", config);
 
     // Request the websocket_client_service to open a websocket with WebsocketConfig
     let mut buf = Buffer::into_buf(config)
@@ -107,20 +109,34 @@ fn test_app(certificate_authority: Option<xous_ipc::String<CA_LEN>>) {
     match buf.to_original::<Return, _>().unwrap() {
         Return::SubProtocol(protocol) => match protocol.to_str() {
             "echo" => log::info!("Opened WebSocket with protocol: {:?}", protocol.to_str()),
-            _ => log::info!("FAIL: protocol != echo"),
+            _ => log::info!("FAIL: protocol != echo (bug https://github.com/ninjasource/embedded-websocket/pull/10)"),
         },
         Return::Failure(hint) => log::info!("FAIL: on retrieve protocol: {:?}", hint),
     };
+
+    match send_message(
+        ws_cid,
+        Message::new_blocking_scalar(Opcode::State.to_usize().unwrap(), 0, 0, 0, 0),
+    ) {
+        Ok(xous::Result::Scalar1(state)) => match state {
+            0 => log::info!("FAIL Websocket state is not open"),
+            1 => log::info!("Websocket state is open"),
+            _ => log::info!("FAIL Websocket state unknown"),
+        },
+        _ => log::info!("FAIL Unable to retrieve Websocket state"),
+    }
 
     loop {
         let mut msg = xous::receive_message(sid).unwrap();
         match FromPrimitive::from_usize(msg.body.id()) {
             Some(TestOpcode::Send) => {
                 log::info!("Received TestOpcode::Send");
-                let outbound: xous_ipc::String<TEST_MSG_SIZE> = xous_ipc::String::from_str(
-                    "send this message outbound from test_app via websocket",
-                );
+                let outbound: xous_ipc::String<TEST_MSG_SIZE> =
+                    xous_ipc::String::from_str("please echo me");
                 let buf = Buffer::into_buf(outbound).expect("failed put msg in buffer");
+
+                log::info!("Outbound Buffer {:?}", &buf[..64]);
+
                 buf.send(ws_cid, Opcode::Send.to_u32().unwrap())
                     .map(|_| ())
                     .expect("failed to send via websocket");
