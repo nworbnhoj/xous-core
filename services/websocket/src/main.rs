@@ -41,16 +41,43 @@ impl<T: Read + Write> ws::framer::Stream<Error> for WsStream<T> {
 
 /** Holds the machinery for each websocket between Opcode calls */
 struct Assets<R: rand::RngCore> {
+    //, T:Read + Write> {
     /** the configuration of an open websocket */
     socket: WebSocketClient<R>,
     /** a websocket stream when opened on a tls conneciton */
     wss_stream: Option<WsStream<StreamOwned<ClientConnection, TcpStream>>>,
     /** a websocket stream when opened on a tcp conneciton */
     ws_stream: Option<WsStream<TcpStream>>,
+    //    stream: Option<WsStream<T>>,
+    read_buf: [u8; WEBSOCKET_BUFFER_LEN],
+    read_cursor: usize,
+    write_buf: [u8; WEBSOCKET_BUFFER_LEN],
     /** the callback_id to use when relaying an inbound websocket frame */
     cid: CID,
     /** the opcode to use when relaying an inbound websocket frame */
     opcode: u32,
+}
+
+impl<R: rand::RngCore> Assets<R> {
+    fn framer(&mut self) -> Framer<R, embedded_websocket::Client> {
+        Framer::new(
+            &mut self.read_buf[..],
+            &mut self.read_cursor,
+            &mut self.write_buf[..],
+            &mut self.socket,
+        )
+    }
+    /*
+    fn stream(&mut self) -> Option<WsStream<T>> {
+        match self.wss_stream {
+            Some(stream) => Some(stream),
+            None => match self.ws_stream {
+                Some(stream) => Some(stream),
+                None => None,
+            },
+        }
+    }
+    */
 }
 
 #[xous::xous_main]
@@ -71,12 +98,6 @@ fn xmain() -> ! {
     // build a thread that emits a regular WebSocketOp::Poll to check for inbound websocket frames
     spawn_poll_pump(ws_cid);
 
-    let mut read_buf = [0; WEBSOCKET_BUFFER_LEN];
-    let mut read_cursor = 0;
-    let mut write_buf = [0; WEBSOCKET_BUFFER_LEN];
-    let mut frame_buf = [0; WEBSOCKET_BUFFER_LEN];
-    let mut _read_buf = [0; WEBSOCKET_BUFFER_LEN];
-
     /* holds the assets of existing websockets by pid - and as such - limits each pid to 1 websocket. */
     // TODO review the limitation of 1 websocket per pid.
     let mut store: HashMap<NonZeroU8, Assets<ThreadRng>> = HashMap::new();
@@ -91,34 +112,37 @@ fn xmain() -> ! {
                 let mut buf = unsafe {
                     Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap())
                 };
-                let (mut socket, wss_stream, ws_stream) = match store.get_mut(&pid) {
-                    Some(assets) => (
-                        &mut assets.socket,
-                        &mut assets.wss_stream,
-                        &mut assets.ws_stream,
-                    ),
+
+                let mut framer: Framer<rand::rngs::ThreadRng, embedded_websocket::Client>;
+                let (wss_stream, ws_stream) = match store.get_mut(&pid) {
+                    Some(assets) => {
+                        framer = Framer::new(
+                            &mut assets.read_buf[..],
+                            &mut assets.read_cursor,
+                            &mut assets.write_buf[..],
+                            &mut assets.socket,
+                        );
+                        (&mut assets.wss_stream, &mut assets.ws_stream)
+                    }
                     None => {
                         buf.replace(drop("Websocket assets not in list"))
                             .expect("failed replace buffer");
                         continue;
                     }
                 };
-                zero(&mut vec![&mut read_buf[..], &mut write_buf[..]]);
-                let mut framer =
-                    Framer::new(&mut read_buf, &mut read_cursor, &mut write_buf, &mut socket);
 
                 let response = match wss_stream {
                     Some(stream) => framer.close(&mut *stream, StatusCode::NormalClosure, None),
-
                     None => match ws_stream {
                         Some(stream) => framer.close(&mut *stream, StatusCode::NormalClosure, None),
-
                         None => {
-                            log::info!("Assets missing both wss_stream and ws_stream");
+                            buf.replace(drop("Assets missing both wss_stream and ws_stream"))
+                                .expect("failed replace buffer");
                             continue;
                         }
                     },
                 };
+
                 match response {
                     Ok(()) => log::info!("Sent close handshake"),
                     Err(e) => {
@@ -126,7 +150,7 @@ fn xmain() -> ! {
                         buf.replace(drop(&hint)).expect("failed replace buffer");
                         continue;
                     }
-                };                
+                };
                 log::info!("Websocket Opcode::Close complete");
             }
             Some(Opcode::Open) => {
@@ -173,9 +197,11 @@ fn xmain() -> ! {
                     sub_protocols: Some(&protocols),
                     additional_headers: None,
                 };
+                let mut read_buf = [0; WEBSOCKET_BUFFER_LEN];
+                let mut read_cursor = 0;
+                let mut write_buf = [0; WEBSOCKET_BUFFER_LEN];
 
                 let mut ws_client = WebSocketClient::new_client(rand::thread_rng());
-                zero(&mut vec![&mut read_buf[..], &mut write_buf[..]]);
                 let mut framer = Framer::new(
                     &mut read_buf,
                     &mut read_cursor,
@@ -261,6 +287,9 @@ fn xmain() -> ! {
                                 socket: ws_client,
                                 wss_stream: wss_stream,
                                 ws_stream: ws_stream,
+                                read_buf: read_buf,
+                                read_cursor: read_cursor,
+                                write_buf: write_buf,
                                 cid: ws_config.cid,
                                 opcode: ws_config.opcode,
                             },
@@ -279,11 +308,12 @@ fn xmain() -> ! {
                 log::info!("Websocket Opcode::Poll");
                 // Check each websocket for an inbound frame to read and send to the cid
                 for (_pid, assets) in &mut store {
-                    zero(&mut vec![&mut read_buf[..], &mut write_buf[..]]);
+                    log::info!("cursor {:?}", assets.read_cursor);
+
                     let mut framer = Framer::new(
-                        &mut read_buf,
-                        &mut read_cursor,
-                        &mut write_buf,
+                        &mut assets.read_buf,
+                        &mut assets.read_cursor,
+                        &mut assets.write_buf,
                         &mut assets.socket,
                     );
 
@@ -297,14 +327,10 @@ fn xmain() -> ! {
                     };
 
                     match wss_stream {
-                        Some(stream) => {
-                            poll(&mut framer, &mut *stream, &mut frame_buf, cid, opcode)
-                        }
+                        Some(stream) => poll(&mut framer, &mut *stream, cid, opcode),
 
                         None => match ws_stream {
-                            Some(stream) => {
-                                poll(&mut framer, &mut *stream, &mut frame_buf, cid, opcode)
-                            }
+                            Some(stream) => poll(&mut framer, &mut *stream, cid, opcode),
 
                             None => {
                                 log::info!("Assets missing both wss_stream and ws_stream");
@@ -321,15 +347,19 @@ fn xmain() -> ! {
                 let mut buf = unsafe {
                     Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap())
                 };
-                let (socket, wss_stream, ws_stream) = match store.get_mut(&pid) {
-                    Some(assets) => (
-                        &mut assets.socket,
-                        &mut assets.wss_stream,
-                        &mut assets.ws_stream,
-                    ),
+                let mut framer: Framer<rand::rngs::ThreadRng, embedded_websocket::Client>;
+                let (wss_stream, ws_stream) = match store.get_mut(&pid) {
+                    Some(assets) => {
+                        framer = Framer::new(
+                            &mut assets.read_buf[..],
+                            &mut assets.read_cursor,
+                            &mut assets.write_buf[..],
+                            &mut assets.socket,
+                        );
+                        (&mut assets.wss_stream, &mut assets.ws_stream)
+                    }
                     None => {
-                        buf.replace(drop("Websocket assets not in list"))
-                            .expect("failed replace buffer");
+                        log::info!("Websocket assets not in list");
                         continue;
                     }
                 };
@@ -345,9 +375,6 @@ fn xmain() -> ! {
                     }
                 };
                 */
-                zero(&mut vec![&mut read_buf[..], &mut write_buf[..]]);
-                let mut framer =
-                    Framer::new(&mut read_buf, &mut read_cursor, &mut write_buf, socket);
 
                 match framer.state() {
                     WebSocketState::Open => {}
@@ -382,45 +409,49 @@ fn xmain() -> ! {
             }
             Some(Opcode::State) => {
                 log::info!("Websocket Opcode::State");
-                let mut pid = msg.sender.pid().unwrap();
+                let pid = msg.sender.pid().unwrap();
                 match store.get_mut(&pid) {
                     Some(assets) => {
-                        zero(&mut vec![&mut read_buf[..], &mut write_buf[..]]);
-                        let mut framer = Framer::new(
-                            &mut read_buf,
-                            &mut read_cursor,
-                            &mut write_buf,
+                        let framer = Framer::new(
+                            &mut assets.read_buf,
+                            &mut assets.read_cursor,
+                            &mut assets.write_buf,
                             &mut assets.socket,
                         );
 
                         if framer.state() == WebSocketState::Open {
-                            xous::return_scalar(msg.sender, 1).expect("failed to return WebSocketState");
+                            xous::return_scalar(msg.sender, 1)
+                                .expect("failed to return WebSocketState");
                         }
                     }
-                    None => xous::return_scalar(msg.sender, 0).expect("failed to return WebSocketState"),
-                };                
+                    None => {
+                        xous::return_scalar(msg.sender, 0).expect("failed to return WebSocketState")
+                    }
+                };
                 log::info!("Websocket Opcode::State complete");
             }
             Some(Opcode::Tick) => {
                 log::info!("Websocket Opcode::Tick");
                 let pid = msg.sender.pid().unwrap();
-                let (socket, wss_stream, ws_stream) = match store.get_mut(&pid) {
-                    Some(assets) => (
-                        &mut assets.socket,
-                        &mut assets.wss_stream,
-                        &mut assets.ws_stream,
-                    ),
+                let mut framer: Framer<rand::rngs::ThreadRng, embedded_websocket::Client>;
+                let (wss_stream, ws_stream) = match store.get_mut(&pid) {
+                    Some(assets) => {
+                        framer = Framer::new(
+                            &mut assets.read_buf[..],
+                            &mut assets.read_cursor,
+                            &mut assets.write_buf[..],
+                            &mut assets.socket,
+                        );
+                        (&mut assets.wss_stream, &mut assets.ws_stream)
+                    }
                     None => {
                         log::info!("Websocket assets not in list");
                         continue;
                     }
                 };
+
                 // TODO review keep alive request technique
                 let frame_buf = "keep alive please :-)".as_bytes();
-
-                zero(&mut vec![&mut read_buf[..], &mut write_buf[..]]);
-                let mut framer =
-                    Framer::new(&mut read_buf, &mut read_cursor, &mut write_buf, socket);
 
                 let response = match wss_stream {
                     Some(stream) => framer.write(&mut *stream, MessageType::Text, true, &frame_buf),
@@ -444,7 +475,7 @@ fn xmain() -> ! {
                         continue;
                     }
                 };
-    
+
                 log::info!("Websocket Opcode::Tick complete");
             }
 
@@ -526,28 +557,17 @@ fn drop(hint: &str) -> api::Return {
     api::Return::Failure(xous_ipc::String::from_str(hint))
 }
 
-/** fill all Arrays in the Vector with 0's  */
-fn zero(dirty: &mut Vec<&mut [u8]>) {
-    dirty
-        .iter_mut()
-        .for_each(|d| d.iter_mut().for_each(|u| *u = 0));
-}
-
 /** read all available frames from the websocket and relay each frame to the caller_id */
-fn poll<E, R, S, T>(
-    framer: &mut Framer<R, S>,
-    stream: &mut T,
-    frame_buf: &mut [u8],
-    cid: CID,
-    opcode: u32,
-) where
+fn poll<E, R, S, T>(framer: &mut Framer<R, S>, stream: &mut T, cid: CID, opcode: u32)
+where
     E: std::fmt::Debug,
     R: rand::RngCore,
     T: ws::framer::Stream<E>,
     S: ws::WebSocketType,
 {
+    let mut frame_buf = [0u8; WEBSOCKET_BUFFER_LEN];
     while let Some(frame) = framer
-        .read_binary(&mut *stream, frame_buf)
+        .read_binary(&mut *stream, &mut frame_buf[..])
         .expect("failed to read websocket")
     {
         let frame: [u8; WEBSOCKET_BUFFER_LEN] = frame
