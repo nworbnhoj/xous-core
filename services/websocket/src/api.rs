@@ -107,12 +107,6 @@ pub struct Frame {
     pub bytes: [u8; WEBSOCKET_BUFFER_LEN],
 }
 
-// Subset of use embedded_websocket::WebSocketSendMessageType
-#[derive(num_derive::FromPrimitive, num_derive::ToPrimitive, Debug)]
-pub enum SendMessageType {
-    Text,
-    Binary,
-}
 
 // a structure for defining the setup of a Websocket.
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug)]

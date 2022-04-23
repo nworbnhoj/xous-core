@@ -373,19 +373,6 @@ fn xmain() -> ! {
                         continue;
                     }
                 };
-                let ws_msg_type = MessageType::Text;
-                /*
-                let ws_msg_type = match FromPrimitive::from_usize(msg_type) {
-                    Some(SendMessageType::Text) => MessageType::Text,
-                    Some(SendMessageType::Binary) => MessageType::Binary,
-                    invalid => {
-                        let hint = format!("Invalid value SendMessageType: {:?}", invalid);
-                        buf.replace(drop(&hint)).expect("failed replace buffer");
-                       continue;
-                    }
-                };
-                */
-
                 match framer.state() {
                     WebSocketState::Open => {}
                     _ => {
@@ -396,10 +383,10 @@ fn xmain() -> ! {
                 }
 
                 let response = match wss_stream {
-                    Some(stream) => framer.write(&mut *stream, ws_msg_type, true, &buf),
+                    Some(stream) => framer.write(&mut *stream, MessageType::Binary, true, &buf),
 
                     None => match ws_stream {
-                        Some(stream) => framer.write(&mut *stream, ws_msg_type, true, &buf),
+                        Some(stream) => framer.write(&mut *stream, MessageType::Binary, true, &buf),
 
                         None => {
                             log::info!("Assets missing both wss_stream and ws_stream");
