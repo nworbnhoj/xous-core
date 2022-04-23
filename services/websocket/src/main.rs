@@ -108,6 +108,9 @@ fn xmain() -> ! {
         match FromPrimitive::from_usize(msg.body.id()) {
             Some(Opcode::Close) => {
                 log::info!("Websocket Opcode::Close");
+                if !validate_msg(&mut msg, WsError::Scalar, Opcode::Close) {
+                    continue;
+                }
                 let pid = msg.sender.pid().unwrap();
                 let mut buf = unsafe {
                     Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap())
@@ -155,6 +158,9 @@ fn xmain() -> ! {
             }
             Some(Opcode::Open) => {
                 log::info!("Websocket Opcode::Open");
+                if !validate_msg(&mut msg, WsError::MemoryBlock, Opcode::Open) {
+                    continue;
+                }
                 let pid = msg.sender.pid().unwrap();
                 let mut buf = unsafe {
                     Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap())
@@ -306,6 +312,9 @@ fn xmain() -> ! {
             }
             Some(Opcode::Poll) => {
                 log::info!("Websocket Opcode::Poll");
+                if !validate_msg(&mut msg, WsError::Scalar, Opcode::Poll) {
+                    continue;
+                }
                 // Check each websocket for an inbound frame to read and send to the cid
                 for (_pid, assets) in &mut store {
                     log::info!("cursor {:?}", assets.read_cursor);
@@ -342,6 +351,9 @@ fn xmain() -> ! {
                 log::info!("Websocket Opcode::Poll complete");
             }
             Some(Opcode::Send) => {
+                if !validate_msg(&mut msg, WsError::Memory, Opcode::Send) {
+                    continue;
+                }
                 log::info!("Websocket Opcode::Send");
                 let pid = msg.sender.pid().unwrap();
                 let mut buf = unsafe {
@@ -409,6 +421,9 @@ fn xmain() -> ! {
             }
             Some(Opcode::State) => {
                 log::info!("Websocket Opcode::State");
+                if !validate_msg(&mut msg, WsError::ScalarBlock, Opcode::State) {
+                    continue;
+                }
                 let pid = msg.sender.pid().unwrap();
                 match store.get_mut(&pid) {
                     Some(assets) => {
@@ -432,6 +447,9 @@ fn xmain() -> ! {
             }
             Some(Opcode::Tick) => {
                 log::info!("Websocket Opcode::Tick");
+                if !validate_msg(&mut msg, WsError::Scalar, Opcode::Tick) {
+                    continue;
+                }
                 let pid = msg.sender.pid().unwrap();
                 let mut framer: Framer<rand::rngs::ThreadRng, embedded_websocket::Client>;
                 let (wss_stream, ws_stream) = match store.get_mut(&pid) {
@@ -481,6 +499,9 @@ fn xmain() -> ! {
 
             Some(Opcode::Quit) => {
                 log::info!("Websocket Opcode::Quit");
+                if !validate_msg(&mut msg, WsError::Scalar, Opcode::Quit) {
+                    continue;
+                }
                 log::warn!("got quit!");
                 let close_op = Opcode::Close.to_usize().unwrap();
                 for (_pid, assets) in &mut store {
@@ -595,4 +616,43 @@ fn ssl_config(certificate_authority: &str) -> rustls::ClientConfig {
         .with_safe_defaults()
         .with_root_certificates(root_certs)
         .with_no_client_auth()
+}
+
+fn validate_msg(env: &mut xous::MessageEnvelope, expected: WsError, opcode: Opcode) -> bool {
+    let is_blocking = env.body.is_blocking();
+    match env.body.memory_message_mut() {
+        None => {
+            if (expected == WsError::Scalar && is_blocking)
+                || (expected == WsError::ScalarBlock && !is_blocking)
+            {
+                log::warn!("invalid xous:MessageEnvelope for Opcode::{:#?}", opcode);
+                xous::return_scalar(env.sender, expected as usize).ok();
+                return false;
+            };
+        }
+        Some(body) => {
+            if (expected == WsError::Memory && is_blocking)
+                || (expected == WsError::MemoryBlock && !is_blocking)
+            {
+                log::warn!("invalid xous:MessageEnvelope for Opcode::{:#?}", opcode);
+                body.valid = None;
+                let s: &mut [u8] = body.buf.as_slice_mut();
+                let mut i = s.iter_mut();
+
+                // Duplicate error to ensure it's seen as an error regardless of byte order/return type
+                // This is necessary because errors are encoded as `u8` slices, but "good"
+                // responses may be encoded as `u16` or `u32` slices.
+                *i.next().expect("failed to set msg byte") = 1;
+                *i.next().expect("failed to set msg byte") = 1;
+                *i.next().expect("failed to set msg byte") = 1;
+                *i.next().expect("failed to set msg byte") = 1;
+                *i.next().expect("failed to set msg byte") = expected as u8;
+                *i.next().expect("failed to set msg byte") = 0;
+                *i.next().expect("failed to set msg byte") = 0;
+                *i.next().expect("failed to set msg byte") = 0;
+                return false;
+            }
+        }
+    };
+    true
 }

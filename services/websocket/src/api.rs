@@ -80,6 +80,18 @@ pub enum Opcode {
     Quit,
 }
 
+#[derive(num_derive::FromPrimitive, num_derive::ToPrimitive, Debug, PartialEq)]
+pub(crate) enum WsError {
+    /// This Opcode accepts Scalar calls
+    Scalar,
+    /// This Opcode accepts Blocking Scalar calls
+    ScalarBlock,
+    /// This Opcode accepts Memory calls
+    Memory,
+    /// This Opcode accepts Blocking Memory calls
+    MemoryBlock,
+}
+
 #[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub enum Return {
     SubProtocol(xous_ipc::String<SUB_PROTOCOL_LEN>),
