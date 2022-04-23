@@ -112,10 +112,6 @@ fn xmain() -> ! {
                     continue;
                 }
                 let pid = msg.sender.pid().unwrap();
-                let mut buf = unsafe {
-                    Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap())
-                };
-
                 let mut framer: Framer<rand::rngs::ThreadRng, embedded_websocket::Client>;
                 let (wss_stream, ws_stream) = match store.get_mut(&pid) {
                     Some(assets) => {
@@ -128,8 +124,8 @@ fn xmain() -> ! {
                         (&mut assets.wss_stream, &mut assets.ws_stream)
                     }
                     None => {
-                        buf.replace(drop("Websocket assets not in list"))
-                            .expect("failed replace buffer");
+                        log::warn!("Websocket assets not in list");
+                        xous::return_scalar(msg.sender, WsError::AssetsFault as usize).ok();
                         continue;
                     }
                 };
@@ -139,8 +135,8 @@ fn xmain() -> ! {
                     None => match ws_stream {
                         Some(stream) => framer.close(&mut *stream, StatusCode::NormalClosure, None),
                         None => {
-                            buf.replace(drop("Assets missing both wss_stream and ws_stream"))
-                                .expect("failed replace buffer");
+                            log::warn!("Assets missing both wss_stream and ws_stream");
+                            xous::return_scalar(msg.sender, WsError::AssetsFault as usize).ok();
                             continue;
                         }
                     },
@@ -148,9 +144,9 @@ fn xmain() -> ! {
 
                 match response {
                     Ok(()) => log::info!("Sent close handshake"),
-                    Err(e) => {
-                        let hint = format!("Failed to send close handshake {:?}", e);
-                        buf.replace(drop(&hint)).expect("failed replace buffer");
+                    Err(e) => {                        
+                        log::warn!("Failed to send close handshake {:?}", e);
+                        xous::return_scalar(msg.sender, WsError::ProtocolError as usize).ok();
                         continue;
                     }
                 };
@@ -342,7 +338,9 @@ fn xmain() -> ! {
                             Some(stream) => poll(&mut framer, &mut *stream, cid, opcode),
 
                             None => {
-                                log::info!("Assets missing both wss_stream and ws_stream");
+                                log::warn!("Assets missing both wss_stream and ws_stream");
+                                xous::return_scalar(msg.sender, WsError::AssetsFault as usize)
+                                    .ok();
                                 continue;
                             }
                         },
@@ -463,7 +461,8 @@ fn xmain() -> ! {
                         (&mut assets.wss_stream, &mut assets.ws_stream)
                     }
                     None => {
-                        log::info!("Websocket assets not in list");
+                        log::warn!("Websocket assets not in list");
+                        xous::return_scalar(msg.sender, WsError::AssetsFault as usize).ok();
                         continue;
                     }
                 };
@@ -480,7 +479,8 @@ fn xmain() -> ! {
                         }
 
                         None => {
-                            log::info!("Assets missing both wss_stream and ws_stream");
+                            log::warn!("Assets missing both wss_stream and ws_stream");
+                            xous::return_scalar(msg.sender, WsError::AssetsFault as usize).ok();
                             continue;
                         }
                     },
@@ -498,17 +498,16 @@ fn xmain() -> ! {
             }
 
             Some(Opcode::Quit) => {
-                log::info!("Websocket Opcode::Quit");
+                log::warn!("Websocket Opcode::Quit");
                 if !validate_msg(&mut msg, WsError::Scalar, Opcode::Quit) {
                     continue;
                 }
-                log::warn!("got quit!");
                 let close_op = Opcode::Close.to_usize().unwrap();
                 for (_pid, assets) in &mut store {
                     xous::send_message(assets.cid, xous::Message::new_scalar(close_op, 0, 0, 0, 0))
                         .expect("couldn't send Websocket poll");
                 }
-                log::info!("Websocket Opcode::Quit complete");
+                log::warn!("Websocket Opcode::Quit complete");
                 break;
             }
             None => {

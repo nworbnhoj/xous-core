@@ -90,6 +90,10 @@ pub(crate) enum WsError {
     Memory,
     /// This Opcode accepts Blocking Memory calls
     MemoryBlock,
+    /// Websocket assets corruption
+    AssetsFault,
+    /// Error in Websocket protocol
+    ProtocolError,
 }
 
 #[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
