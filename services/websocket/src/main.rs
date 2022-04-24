@@ -14,7 +14,7 @@ use std::num::NonZeroU8;
 use std::{
     collections::HashMap,
     convert::TryInto,
-    io::{Error, Read, Write},
+    io::{Error, ErrorKind, Read, Write},
     net::TcpStream,
     thread,
 };
@@ -44,13 +44,17 @@ struct Assets<R: rand::RngCore> {
     //, T:Read + Write> {
     /** the configuration of an open websocket */
     socket: WebSocketClient<R>,
-    /** a websocket stream when opened on a tls conneciton */
+    /** a websocket stream when opened on a tls connection */
     wss_stream: Option<WsStream<StreamOwned<ClientConnection, TcpStream>>>,
-    /** a websocket stream when opened on a tcp conneciton */
+    /** a websocket stream when opened on a tcp connection */
     ws_stream: Option<WsStream<TcpStream>>,
-    //    stream: Option<WsStream<T>>,
+    /** the underlying tcp stream */
+    tcp_stream: TcpStream,
+    /** the framer read buffer */
     read_buf: [u8; WEBSOCKET_BUFFER_LEN],
+    /** the framer read cursor */
     read_cursor: usize,
+    /** the framer write buffer */
     write_buf: [u8; WEBSOCKET_BUFFER_LEN],
     /** the callback_id to use when relaying an inbound websocket frame */
     cid: CID,
@@ -144,7 +148,7 @@ fn xmain() -> ! {
 
                 match response {
                     Ok(()) => log::info!("Sent close handshake"),
-                    Err(e) => {                        
+                    Err(e) => {
                         log::warn!("Failed to send close handshake {:?}", e);
                         xous::return_scalar(msg.sender, WsError::ProtocolError as usize).ok();
                         continue;
@@ -223,10 +227,19 @@ fn xmain() -> ! {
                         continue;
                     }
                 };
+
                 log::info!("TCP connected to {:?}", target);
 
                 let mut ws_stream = None;
                 let mut wss_stream = None;
+                let tcp_clone = match tcp_stream.try_clone() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let hint = format!("Failed to clone TCP Stream {:?}", e);
+                        buf.replace(drop(&hint)).expect("failed replace buffer");
+                        continue;
+                    }
+                };
                 let sub_protocol: xous_ipc::String<SUB_PROTOCOL_LEN>;
                 if ws_config.certificate_authority.is_none() {
                     // Initiate a websocket opening handshake over the TCP Stream
@@ -282,6 +295,7 @@ fn xmain() -> ! {
                 match framer.state() {
                     WebSocketState::Open => {
                         log::info!("WebSocket connected with protocol: {:?}", sub_protocol);
+
                         // Store the open websocket indexed by the calling pid
                         store.insert(
                             pid,
@@ -289,6 +303,7 @@ fn xmain() -> ! {
                                 socket: ws_client,
                                 wss_stream: wss_stream,
                                 ws_stream: ws_stream,
+                                tcp_stream: tcp_clone,
                                 read_buf: read_buf,
                                 read_cursor: read_cursor,
                                 write_buf: write_buf,
@@ -307,13 +322,18 @@ fn xmain() -> ! {
                 log::info!("Websocket Opcode::Open complete");
             }
             Some(Opcode::Poll) => {
-                log::info!("Websocket Opcode::Poll");
+                log::trace!("Websocket Opcode::Poll");
                 if !validate_msg(&mut msg, WsError::Scalar, Opcode::Poll) {
                     continue;
                 }
                 // Check each websocket for an inbound frame to read and send to the cid
-                for (_pid, assets) in &mut store {
-                    log::info!("cursor {:?}", assets.read_cursor);
+                
+                for (pid, assets) in &mut store {
+                    log::trace!("Websocket Opcode::Poll PID={:?}", pid);
+
+                    if empty(&mut assets.tcp_stream) {
+                        continue;
+                    }
 
                     let mut framer = Framer::new(
                         &mut assets.read_buf,
@@ -332,21 +352,19 @@ fn xmain() -> ! {
                     };
 
                     match wss_stream {
-                        Some(stream) => poll(&mut framer, &mut *stream, cid, opcode),
-
+                        Some(stream) => read(&mut framer, &mut *stream, cid, opcode),
                         None => match ws_stream {
-                            Some(stream) => poll(&mut framer, &mut *stream, cid, opcode),
+                            Some(stream) => read(&mut framer, &mut *stream, cid, opcode),
 
                             None => {
                                 log::warn!("Assets missing both wss_stream and ws_stream");
-                                xous::return_scalar(msg.sender, WsError::AssetsFault as usize)
-                                    .ok();
+                                xous::return_scalar(msg.sender, WsError::AssetsFault as usize).ok();
                                 continue;
                             }
                         },
                     };
                 }
-                log::info!("Websocket Opcode::Poll complete");
+                log::trace!("Websocket Opcode::Poll complete");
             }
             Some(Opcode::Send) => {
                 if !validate_msg(&mut msg, WsError::Memory, Opcode::Send) {
@@ -357,6 +375,7 @@ fn xmain() -> ! {
                 let mut buf = unsafe {
                     Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap())
                 };
+                
                 let mut framer: Framer<rand::rngs::ThreadRng, embedded_websocket::Client>;
                 let (wss_stream, ws_stream) = match store.get_mut(&pid) {
                     Some(assets) => {
@@ -383,13 +402,13 @@ fn xmain() -> ! {
                 }
 
                 let response = match wss_stream {
-                    Some(stream) => framer.write(&mut *stream, MessageType::Binary, true, &buf),
+                    Some(stream) => framer.write(&mut *stream, MessageType::Binary, true, &buf[..4080]),
 
                     None => match ws_stream {
-                        Some(stream) => framer.write(&mut *stream, MessageType::Binary, true, &buf),
+                        Some(stream) => framer.write(&mut *stream, MessageType::Binary, true, &buf[..4080]),
 
                         None => {
-                            log::info!("Assets missing both wss_stream and ws_stream");
+                            log::warn!("Assets missing both wss_stream and ws_stream");
                             continue;
                         }
                     },
@@ -560,12 +579,31 @@ fn spawn_tick_pump(cid: CID) {
 
 /** helper function to return hints from opcode panics */
 fn drop(hint: &str) -> api::Return {
-    log::info!("{}", hint);
+    log::warn!("{}", hint);
     api::Return::Failure(xous_ipc::String::from_str(hint))
 }
 
+fn empty(stream: &mut TcpStream) -> bool {
+    stream
+        .set_nonblocking(true)
+        .expect("failed to set TCP Stream to non-blocking");
+    let mut frame_buf = [0u8; 8];
+    let empty = match stream.peek(&mut frame_buf) {
+        Ok(_) => false,
+        Err(ref e) if e.kind() == ErrorKind::WouldBlock => true,
+        Err(e) => {
+            log::warn!("TCP IO error: {}", e);
+            true
+        }
+    };
+    stream
+        .set_nonblocking(false)
+        .expect("failed to set TCP Stream to non-blocking");
+    empty
+}
+
 /** read all available frames from the websocket and relay each frame to the caller_id */
-fn poll<E, R, S, T>(framer: &mut Framer<R, S>, stream: &mut T, cid: CID, opcode: u32)
+fn read<E, R, S, T>(framer: &mut Framer<R, S>, stream: &mut T, cid: CID, opcode: u32)
 where
     E: std::fmt::Debug,
     R: rand::RngCore,
@@ -583,7 +621,7 @@ where
         let buf = Buffer::into_buf(Frame { bytes: frame })
             .expect("failed to serialize websocket frame into buffer");
         buf.send(cid, opcode)
-            .expect("failed to send websocket frame");
+            .expect("failed to relay websocket frame");
     }
 }
 
