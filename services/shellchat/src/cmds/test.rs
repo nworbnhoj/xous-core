@@ -608,6 +608,16 @@ impl<'a> ShellCmdApi<'a> for Test {
                         write!(ret, "Ship mode request denied").unwrap();
                     }
                 }
+                "peek" => {
+                
+                
+                   let mut frame_buf = [0u8; 8 ]; //WEBSOCKET_BUFFER_LEN];
+                    match tcp_stream.peek(&mut frame_buf){
+                        Ok(len) => log::info!("len = {:?}", len),
+                        Err(e) => log::info!("{:?}", e),
+                    }
+                     
+                }
                 _ => {
                     () // do nothing
                 }
