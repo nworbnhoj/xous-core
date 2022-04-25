@@ -49,6 +49,9 @@ rkyv = {version = "0.4.3", default-features = false, features = ["const_generics
 
 chrono = {version = "0.4.19", default-features = false, features = ["std"]}
 
+embedded-websocket = "0.8.0"
+httparse = "1.7.0"
+
 # for audio self-test analysis
 spectrum-analyzer = "0.5.2"
 # used to parse net connectivity results

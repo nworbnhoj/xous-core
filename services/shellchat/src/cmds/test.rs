@@ -1,3 +1,7 @@
+mod ws_test_server;
+use std::net::TcpStream;
+use std::thread;
+
 use crate::oqc_test::OqcOp;
 use crate::{ShellCmdApi,CommonEnv};
 use xous_ipc::String;
@@ -12,6 +16,7 @@ use std::sync::Arc;
 use num_traits::*;
 
 use std::time::Instant;
+
 
 static AUDIO_OQC: AtomicBool = AtomicBool::new(false);
 
@@ -608,15 +613,36 @@ impl<'a> ShellCmdApi<'a> for Test {
                         write!(ret, "Ship mode request denied").unwrap();
                     }
                 }
-                "peek" => {
+                "peek" => {     
+                    let tt = ticktimer_server::Ticktimer::new().unwrap();
+                    
+                    log::info!("Starting local websocket server");
+                    thread::spawn({
+                        move || {
+                            ws_test_server::main();
+                        }
+                    });
+                    log::info!("Started local websocket server on 127.0.0.1:1337");                
                 
+                    // pause to allow server to get up and running
+                    tt.sleep_ms(5000).expect("insomnia");
                 
-                   let mut frame_buf = [0u8; 8 ]; //WEBSOCKET_BUFFER_LEN];
-                    match tcp_stream.peek(&mut frame_buf){
+                    let stream = TcpStream::connect("127.0.0.1:1337")
+                       .expect("Couldn't connect to the server...");
+                       
+                    // pause to allow allow client to connect to server 
+                    tt.sleep_ms(5000).expect("insomnia");
+                
+                   let mut frame_buf = [0u8; 8 ];                   
+                   
+                   log::info!("PRE block >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+                   
+                    match stream.peek(&mut frame_buf){
                         Ok(len) => log::info!("len = {:?}", len),
                         Err(e) => log::info!("{:?}", e),
                     }
-                     
+                    
+                   log::info!("POST block >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
                 }
                 _ => {
                     () // do nothing
