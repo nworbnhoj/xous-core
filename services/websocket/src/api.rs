@@ -29,12 +29,14 @@ pub(crate) const PASSWORD_LEN: usize = 128;
 pub const SUB_PROTOCOL_LEN: usize = 24;
 
 /*
- WEBSOCKET_BUFFER_LEN can be as small as 14bytes, but presumably comes with a performance degradation.
- ( see https://crates.io/crates/embedded-websocket )
- Also: there may be advantage in independently specifying the read, frame, and write buffer sizes.
+ A websocket header requires at least 14 bytes of the websocket buffer
+ ( see https://crates.io/crates/embedded-websocket ) leaving the remainder
+ available for the payload. This relates directly to the frame buffer.
+ There may be advantage in independently specifying the read, frame, and write buffer sizes.
  TODO review/test/optimise WEBSOCKET_BUFFER_LEN
 */
 pub(crate) const WEBSOCKET_BUFFER_LEN: usize = 4096;
+pub(crate) const WEBSOCKET_PAYLOAD_LEN: usize = 4080;
 
 /// These opcodes can be called by anyone at any time
 #[derive(num_derive::FromPrimitive, num_derive::ToPrimitive, Debug)]
@@ -104,9 +106,8 @@ pub enum Return {
 
 #[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct Frame {
-    pub bytes: [u8; WEBSOCKET_BUFFER_LEN],
+    pub bytes: [u8; WEBSOCKET_PAYLOAD_LEN],
 }
-
 
 // a structure for defining the setup of a Websocket.
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug)]

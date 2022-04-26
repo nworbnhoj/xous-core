@@ -327,7 +327,7 @@ fn xmain() -> ! {
                     continue;
                 }
                 // Check each websocket for an inbound frame to read and send to the cid
-                
+
                 for (pid, assets) in &mut store {
                     log::trace!("Websocket Opcode::Poll PID={:?}", pid);
 
@@ -375,7 +375,7 @@ fn xmain() -> ! {
                 let mut buf = unsafe {
                     Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap())
                 };
-                
+
                 let mut framer: Framer<rand::rngs::ThreadRng, embedded_websocket::Client>;
                 let (wss_stream, ws_stream) = match store.get_mut(&pid) {
                     Some(assets) => {
@@ -402,10 +402,20 @@ fn xmain() -> ! {
                 }
 
                 let response = match wss_stream {
-                    Some(stream) => framer.write(&mut *stream, MessageType::Binary, true, &buf[..4080]),
+                    Some(stream) => framer.write(
+                        &mut *stream,
+                        MessageType::Binary,
+                        true,
+                        &buf[..WEBSOCKET_PAYLOAD_LEN],
+                    ),
 
                     None => match ws_stream {
-                        Some(stream) => framer.write(&mut *stream, MessageType::Binary, true, &buf[..4080]),
+                        Some(stream) => framer.write(
+                            &mut *stream,
+                            MessageType::Binary,
+                            true,
+                            &buf[..WEBSOCKET_PAYLOAD_LEN],
+                        ),
 
                         None => {
                             log::warn!("Assets missing both wss_stream and ws_stream");
@@ -610,12 +620,12 @@ where
     T: ws::framer::Stream<E>,
     S: ws::WebSocketType,
 {
-    let mut frame_buf = [0u8; WEBSOCKET_BUFFER_LEN];
+    let mut frame_buf = [0u8; WEBSOCKET_PAYLOAD_LEN];
     while let Some(frame) = framer
         .read_binary(&mut *stream, &mut frame_buf[..])
         .expect("failed to read websocket")
     {
-        let frame: [u8; WEBSOCKET_BUFFER_LEN] = frame
+        let frame: [u8; WEBSOCKET_PAYLOAD_LEN] = frame
             .try_into()
             .expect("websocket frame too large for buffer");
         let buf = Buffer::into_buf(Frame { bytes: frame })
