@@ -79,11 +79,10 @@ fn handle_client(mut stream: TcpStream) -> Result<(), WebServerError> {
     let mut read_buf = [0; 4000];
     let mut read_cursor = 0;
 
-    if let Some(websocket_context) = read_header(&mut stream, &mut read_buf, &mut read_cursor)?
-    {
+    if let Some(websocket_context) = read_header(&mut stream, &mut read_buf, &mut read_cursor)? {
         // this is a websocket upgrade HTTP request
-        let mut write_buf = [0; 4000];
-        let mut frame_buf = [0; 4000];
+        let mut write_buf = [0; 8000];
+        let mut frame_buf = [0; 8000];
         let mut websocket = WebSocketServer::new_server();
         let mut framer = Framer::new(
             &mut read_buf,
@@ -91,7 +90,7 @@ fn handle_client(mut stream: TcpStream) -> Result<(), WebServerError> {
             &mut write_buf,
             &mut websocket,
         );
-        
+
         // complete the opening handshake with the client
         match framer.accept(&mut stream, &websocket_context) {
             Ok(()) => log::info!("Accepted Websocket connection"),
@@ -99,20 +98,19 @@ fn handle_client(mut stream: TcpStream) -> Result<(), WebServerError> {
         };
 
         // read websocket frames
-        while let text = framer.read_text(&mut stream, &mut frame_buf)? {
-            log::info!("Received: {}", text.unwrap());
-
-            // send the text back to the client
-            match framer.write(
-                &mut stream,
-                WebSocketSendMessageType::Text,
-                true,
-                text.unwrap().as_bytes(),
-            ) {
-                Ok(_) => log::info!("Wrote to websocket: {:?} ", text.unwrap()),
-                Err(e) => log::info!("Failed to write to websocket: {:?}", e),
+        //while let bytes = match framer.read_binary(&mut stream, &mut frame_buf)? {
+        let bytes = match framer.read_binary(&mut stream, &mut frame_buf)? {
+            Some(bytes) => {
+                log::info!("Received {} bytes", bytes.len());
+                // send the bytes back to the client
+                match framer.write(&mut stream, WebSocketSendMessageType::Binary, true, bytes) {
+                    Ok(_) => log::info!("Wrote {} bytes to websocket", bytes.len()),
+                    Err(e) => log::info!("Failed to write to websocket: {:?}", e),
+                }
             }
-        }
+            None => log::info!("Failed to read from websocket:"),
+        //} {}
+        };
 
         log::info!("Closing websocket connection");
         Ok(())
