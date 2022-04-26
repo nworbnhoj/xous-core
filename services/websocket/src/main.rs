@@ -19,7 +19,7 @@ use std::{
     thread,
 };
 use url::Url;
-use ws::framer::Framer;
+use ws::framer::{Framer, FramerError};
 use ws::WebSocketCloseStatusCode as StatusCode;
 use ws::WebSocketSendMessageType as MessageType;
 use ws::{WebSocketClient, WebSocketOptions, WebSocketState};
@@ -402,21 +402,9 @@ fn xmain() -> ! {
                 }
 
                 let response = match wss_stream {
-                    Some(stream) => framer.write(
-                        &mut *stream,
-                        MessageType::Binary,
-                        true,
-                        &buf[..WEBSOCKET_PAYLOAD_LEN],
-                    ),
-
+                    Some(stream) => write(&mut framer, &mut *stream, &buf),
                     None => match ws_stream {
-                        Some(stream) => framer.write(
-                            &mut *stream,
-                            MessageType::Binary,
-                            true,
-                            &buf[..WEBSOCKET_PAYLOAD_LEN],
-                        ),
-
+                        Some(stream) => write(&mut framer, &mut *stream, &buf),
                         None => {
                             log::warn!("Assets missing both wss_stream and ws_stream");
                             continue;
@@ -633,6 +621,31 @@ where
         buf.send(cid, opcode)
             .expect("failed to relay websocket frame");
     }
+}
+
+fn write<E, R, S, T>(framer: &mut Framer<R, S>, stream: &mut T, buffer: &[u8]) -> Result<(), FramerError<E>>
+where
+    E: std::fmt::Debug,
+    R: rand::RngCore,
+    T: ws::framer::Stream<E>,
+    S: ws::WebSocketType,
+{
+    let mut ret = Ok(());
+    let mut end_of_message = false;
+    let mut start = 0;
+    let mut slice;
+    while !end_of_message {
+        log::info!("start = {:?}", start);
+        if buffer.len() < (start + WEBSOCKET_PAYLOAD_LEN) {
+            end_of_message = true;
+            slice = &buffer[start..];
+        } else {
+            slice = &buffer[start..(start + WEBSOCKET_PAYLOAD_LEN)];
+        }
+        ret = framer.write(&mut *stream, MessageType::Binary, end_of_message, slice);
+        start = start + WEBSOCKET_PAYLOAD_LEN;
+    };
+    ret
 }
 
 /** complete the machinations of setting up a rustls::ClientConfig */
