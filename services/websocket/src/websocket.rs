@@ -1,8 +1,6 @@
 #![cfg_attr(target_os = "none", no_std)]
 #![cfg_attr(target_os = "none", no_main)]
 
-
-
 use derive_deref::*;
 use embedded_websocket as ws;
 use num_traits::{FromPrimitive, ToPrimitive};
@@ -43,9 +41,6 @@ pub(crate) const HINT_LEN: usize = 128;
 pub(crate) const WEBSOCKET_BUFFER_LEN: usize = 4096;
 pub(crate) const WEBSOCKET_PAYLOAD_LEN: usize = 4080;
 
-
-
-
 #[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct Frame {
     pub bytes: [u8; WEBSOCKET_PAYLOAD_LEN],
@@ -56,23 +51,6 @@ pub enum Opcode {
     /// Close an existing websocket.
     /// xous::Message::new_scalar(Opcode::Close, _, _, _, _)
     Close = 1,
-    /// Open a new websocket.
-    /// Attempts to establish a new websocket connection based on WebsocketConfig and return
-    /// the sub_protocol nominated by the server (if any).
-    ///     let ws_config = WebsocketConfig {
-    ///         certificate_authority:     optional ca for a TLS connection - fallback to tcp
-    ///         base_url:                  the url of the target websocket server
-    ///         path:                      a path to apend to the url
-    ///         use_credentials:           true to authenticate
-    ///         login:                     authentication username
-    ///         password:                  authentication password
-    ///         cid:                       the callback id for inbound data frames
-    ///         opcode:                    the opcode for inbound data frames
-    ///     };
-    ///     let buf = Buffer::into_buf(ws_config);
-    ///     buf.lend(ws_cid, Opcode::Open).map(|_| ());
-    ///     let sub_protocol: Return::SubProtocol(protocol) = buf.to_original::<Return, _>().unwrap()
-    Open,
     /// send a websocket frame
     Send,
     /// Return the current State of the websocket
@@ -89,7 +67,6 @@ pub enum Opcode {
     Quit,
 }
 
-
 #[derive(Clone, Copy, Debug, Deref, DerefMut)]
 struct WsStream<T: Read + Write>(T);
 
@@ -103,9 +80,7 @@ impl<T: Read + Write> ws::framer::Stream<Error> for WsStream<T> {
     }
 }
 
-/** Holds the machinery for each websocket between Opcode calls */
-struct Assets<R: rand::RngCore> {
-    //, T:Read + Write> {
+struct Websocket<R: rand::RngCore> {
     /** the configuration of an open websocket */
     socket: WebSocketClient<R>,
     /** a websocket stream when opened on a tls connection */
@@ -126,26 +101,129 @@ struct Assets<R: rand::RngCore> {
     opcode: u32,
 }
 
-impl<R: rand::RngCore> Assets<R> {
-    fn framer(&mut self) -> Framer<R, embedded_websocket::Client> {
-        Framer::new(
-            &mut self.read_buf[..],
+impl<R: rand::RngCore> Websocket<R> {
+    pub(crate) fn new(
+        &mut self,
+        path: &'a str,
+        host: &'a str,
+        origin: &'a str,
+        sub_protocols: Option<&'a [&'a str]>,
+        additional_headers: Option<&'a [&'a str]>,
+    ) {
+        let websocket_options = WebSocketOptions {
+            path,
+            host,
+            origin,
+            sub_protocols,
+            additional_headers,
+        };
+        self.read_buf = [0; WEBSOCKET_BUFFER_LEN];
+        self.read_cursor = 0;
+        self.write_buf = [0; WEBSOCKET_BUFFER_LEN];
+
+        let mut ws_client = WebSocketClient::new_client(rand::thread_rng());
+        let mut framer = Framer::new(
+            &mut self.read_buf,
             &mut self.read_cursor,
-            &mut self.write_buf[..],
-            &mut self.socket,
-        )
-    }
-    /*
-    fn stream(&mut self) -> Option<WsStream<T>> {
-        match self.wss_stream {
-            Some(stream) => Some(stream),
-            None => match self.ws_stream {
-                Some(stream) => Some(stream),
-                None => None,
-            },
+            &mut self.write_buf,
+            &mut ws_client,
+        );
+
+        log::trace!("Will start websocket at {:?}", url.host_str().unwrap());
+        // Create a TCP Stream between this device and the remote Server
+        let target = format!("{}:{}", url.host_str().unwrap(), url.port().unwrap());
+        log::info!("Opening TCP connection to {:?}", target);
+        self.tcp_stream = match TcpStream::connect(&target) {
+            Ok(tcp_stream) => tcp_stream,
+            Err(e) => {
+                let hint = format!("Failed to open TCP Stream {:?}", e);
+                buf.replace(drop(&hint)).expect("failed replace buffer");
+                continue;
+            }
+        };
+
+        log::info!("TCP connected to {:?}", target);
+
+        self.ws_stream = None;
+        self.wss_stream = None;
+        let tcp_clone = match self.tcp_stream.try_clone() {
+            Ok(c) => c,
+            Err(e) => {
+                let hint = format!("Failed to clone TCP Stream {:?}", e);
+                buf.replace(drop(&hint)).expect("failed replace buffer");
+                continue;
+            }
+        };
+        let sub_protocol: xous_ipc::String<SUB_PROTOCOL_LEN>;
+        if ws_config.certificate_authority.is_none() {
+            // Initiate a websocket opening handshake over the TCP Stream
+            let mut stream = WsStream(self.tcp_stream);
+            sub_protocol = match framer.connect(&mut stream, &websocket_options) {
+                Ok(opt) => match opt {
+                    Some(sp) => xous_ipc::String::from_str(sp.to_string()),
+                    None => xous_ipc::String::from_str(""),
+                },
+                Err(e) => {
+                    let hint = format!("Unable to connect WebSocket {:?}", e);
+                    buf.replace(drop(&hint)).expect("failed replace buffer");
+                    continue;
+                }
+            };
+            self.ws_stream = Some(stream);
+        } else {
+            // Create a TLS connection to the remote Server on the TCP Stream
+            let ca = ws_config.certificate_authority.unwrap();
+            let ca = ca
+                .as_str()
+                .expect("certificate_authority utf-8 decode error");
+            let tls_connector = RustlsConnector::from(ssl_config(ca));
+            self.tls_stream = match tls_connector.connect(url.host_str().unwrap(), tcp_stream) {
+                Ok(tls_stream) => {
+                    log::info!("TLS connected to {:?}", url.host_str().unwrap());
+                    tls_stream
+                }
+                Err(e) => {
+                    let hint = format!("Failed to complete TLS handshake {:?}", e);
+                    buf.replace(drop(&hint)).expect("failed replace buffer");
+                    continue;
+                }
+            };
+            // Initiate a websocket opening handshake over the TLS Stream
+            let mut stream = WsStream(self.tls_stream);
+            sub_protocol = match framer.connect(&mut stream, &websocket_options) {
+                Ok(opt) => match opt {
+                    Some(sp) => xous_ipc::String::from_str(sp.to_string()),
+                    None => xous_ipc::String::from_str(""),
+                },
+                Err(e) => {
+                    let hint = format!("Unable to connect WebSocket {:?}", e);
+                    buf.replace(drop(&hint)).expect("failed replace buffer");
+                    continue;
+                }
+            };
+            self.wss_stream = Some(stream);
+        }
+
+        let mut response = api::Return::SubProtocol(sub_protocol);
+        match framer.state() {
+            WebSocketState::Open => {
+                log::info!("WebSocket connected with protocol: {:?}", sub_protocol);
+
+                spawn_poll(
+                    ws_config.cid,
+                    ws_config.opcode,
+                    tcp_clone,
+                    ws_stream,
+                    wss_stream,
+                    ws_client,
+                );
+            }
+            _ => {
+                let hint = format!("WebSocket failed to connect {:?}", framer.state());
+                response = drop(&hint);
+            }
         }
     }
-    */
 }
 
 #[xous::xous_main]
@@ -163,8 +241,6 @@ fn xmain() -> ! {
 
     // build a thread that emits a regular WebSocketOp::Tick to send a KeepAliveRequest
     spawn_tick_pump(ws_cid);
-    // build a thread that emits a regular WebSocketOp::Poll to check for inbound websocket frames
-    spawn_poll_pump(ws_cid);
 
     /* holds the assets of existing websockets by pid - and as such - limits each pid to 1 websocket. */
     // TODO review the limitation of 1 websocket per pid.
@@ -219,164 +295,6 @@ fn xmain() -> ! {
                     }
                 };
                 log::info!("Websocket Opcode::Close complete");
-            }
-            Some(Opcode::Open) => {
-                log::info!("Websocket Opcode::Open");
-                if !validate_msg(&mut msg, WsError::MemoryBlock, Opcode::Open) {
-                    continue;
-                }
-                let pid = msg.sender.pid().unwrap();
-                let mut buf = unsafe {
-                    Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap())
-                };
-                if store.contains_key(&pid) {
-                    buf.replace(drop("WebSocket already open"))
-                        .expect("failed replace buffer");
-                    continue;
-                }
-                let ws_config = buf.to_original::<WebsocketConfig, _>().unwrap();
-
-                // construct url from ws_config
-                let url = ws_config.base_url.as_str().expect("url utf-8 decode fail");
-                let path = ws_config.path.as_str().expect("path utf-8 decode error");
-                let mut url = Url::parse(url).expect("invalid base_url");
-                url = url.join(path).expect("valid path");
-                match ws_config.certificate_authority.is_some() {
-                    true => url.set_scheme("wss").expect("fail set url scheme"),
-                    false => url.set_scheme("ws").expect("fail set url scheme"),
-                };
-                if ws_config.use_credentials {
-                    let login = ws_config.login.as_str().expect("login utf-8 decode error");
-                    let password = ws_config
-                        .password
-                        .as_str()
-                        .expect("password utf-8 decode error");
-                    url.query_pairs_mut()
-                        .append_pair("login", &login)
-                        .append_pair("password", &password);
-                }
-                let protocols = [
-                    ws_config.sub_protocols[0].as_str().unwrap(),
-                    ws_config.sub_protocols[1].as_str().unwrap(),
-                    ws_config.sub_protocols[2].as_str().unwrap(),
-                ];
-                let websocket_options = WebSocketOptions {
-                    path: &path,
-                    host: &url.host_str().unwrap(),
-                    origin: &url.origin().unicode_serialization(),
-                    sub_protocols: Some(&protocols),
-                    additional_headers: None,
-                };
-                let mut read_buf = [0; WEBSOCKET_BUFFER_LEN];
-                let mut read_cursor = 0;
-                let mut write_buf = [0; WEBSOCKET_BUFFER_LEN];
-
-                let mut ws_client = WebSocketClient::new_client(rand::thread_rng());
-                let mut framer = Framer::new(
-                    &mut read_buf,
-                    &mut read_cursor,
-                    &mut write_buf,
-                    &mut ws_client,
-                );
-
-                log::trace!("Will start websocket at {:?}", url.host_str().unwrap());
-                // Create a TCP Stream between this device and the remote Server
-                let target = format!("{}:{}", url.host_str().unwrap(), url.port().unwrap());
-                log::info!("Opening TCP connection to {:?}", target);
-                let tcp_stream = match TcpStream::connect(&target) {
-                    Ok(tcp_stream) => tcp_stream,
-                    Err(e) => {
-                        let hint = format!("Failed to open TCP Stream {:?}", e);
-                        buf.replace(drop(&hint)).expect("failed replace buffer");
-                        continue;
-                    }
-                };
-
-                log::info!("TCP connected to {:?}", target);
-
-                let mut ws_stream = None;
-                let mut wss_stream = None;
-                let tcp_clone = match tcp_stream.try_clone() {
-                    Ok(c) => c,
-                    Err(e) => {
-                        let hint = format!("Failed to clone TCP Stream {:?}", e);
-                        buf.replace(drop(&hint)).expect("failed replace buffer");
-                        continue;
-                    }
-                };
-                let sub_protocol: xous_ipc::String<SUB_PROTOCOL_LEN>;
-                if ws_config.certificate_authority.is_none() {
-                    // Initiate a websocket opening handshake over the TCP Stream
-                    let mut stream = WsStream(tcp_stream);
-                    sub_protocol = match framer.connect(&mut stream, &websocket_options) {
-                        Ok(opt) => match opt {
-                            Some(sp) => xous_ipc::String::from_str(sp.to_string()),
-                            None => xous_ipc::String::from_str(""),
-                        },
-                        Err(e) => {
-                            let hint = format!("Unable to connect WebSocket {:?}", e);
-                            buf.replace(drop(&hint)).expect("failed replace buffer");
-                            continue;
-                        }
-                    };
-                    ws_stream = Some(stream);
-                } else {
-                    // Create a TLS connection to the remote Server on the TCP Stream
-                    let ca = ws_config.certificate_authority.unwrap();
-                    let ca = ca
-                        .as_str()
-                        .expect("certificate_authority utf-8 decode error");
-                    let tls_connector = RustlsConnector::from(ssl_config(ca));
-                    let tls_stream =
-                        match tls_connector.connect(url.host_str().unwrap(), tcp_stream) {
-                            Ok(tls_stream) => {
-                                log::info!("TLS connected to {:?}", url.host_str().unwrap());
-                                tls_stream
-                            }
-                            Err(e) => {
-                                let hint = format!("Failed to complete TLS handshake {:?}", e);
-                                buf.replace(drop(&hint)).expect("failed replace buffer");
-                                continue;
-                            }
-                        };
-                    // Initiate a websocket opening handshake over the TLS Stream
-                    let mut stream = WsStream(tls_stream);
-                    sub_protocol = match framer.connect(&mut stream, &websocket_options) {
-                        Ok(opt) => match opt {
-                            Some(sp) => xous_ipc::String::from_str(sp.to_string()),
-                            None => xous_ipc::String::from_str(""),
-                        },
-                        Err(e) => {
-                            let hint = format!("Unable to connect WebSocket {:?}", e);
-                            buf.replace(drop(&hint)).expect("failed replace buffer");
-                            continue;
-                        }
-                    };
-                    wss_stream = Some(stream);
-                }
-
-                let mut response = api::Return::SubProtocol(sub_protocol);
-                match framer.state() {
-                    WebSocketState::Open => {
-                        log::info!("WebSocket connected with protocol: {:?}", sub_protocol);
-                        
-                        spawn_poll(
-                            ws_config.cid,
-                            ws_config.opcode,
-                            tcp_clone,
-                            ws_stream,
-                            wss_stream,
-                            ws_client,
-                        );
-                    }
-                    _ => {
-                        let hint = format!("WebSocket failed to connect {:?}", framer.state());
-                        response = drop(&hint);
-                    }
-                }
-
-                buf.replace(response).expect("failed replace buffer");
-                log::info!("Websocket Opcode::Open complete");
             }
             Some(Opcode::Send) => {
                 if !validate_msg(&mut msg, WsError::Memory, Opcode::Send) {
@@ -551,24 +469,20 @@ fn spawn_poll<R: rand::RngCore>(
     thread::spawn({
         move || {
             let tt = ticktimer_server::Ticktimer::new().unwrap();
-            
+
             let mut read_buf = [0; WEBSOCKET_BUFFER_LEN];
             let mut read_cursor = 0;
             let mut write_buf = [0; WEBSOCKET_BUFFER_LEN];
 
-            let mut framer = Framer::new(
-                &mut read_buf,
-                &mut read_cursor,
-                &mut write_buf,
-                &mut socket,
-            );
+            let mut framer =
+                Framer::new(&mut read_buf, &mut read_cursor, &mut write_buf, &mut socket);
 
             loop {
                 tt.sleep_ms(LISTENER_POLL_INTERVAL_MS.as_millis().try_into().unwrap())
                     .unwrap();
-                    
+
                 log::trace!("Websocket Poll");
-                    
+
                 if framer.state() != WebSocketState::Open {
                     break;
                 }
@@ -588,7 +502,7 @@ fn spawn_poll<R: rand::RngCore>(
                             continue;
                         }
                     },
-                };                
+                };
                 log::trace!("Websocket Read complete");
             }
         }
