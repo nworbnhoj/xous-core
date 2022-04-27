@@ -221,6 +221,9 @@ impl<R: rand::RngCore> Websocket<R> {
                         );
                     }
                 });
+
+                // start the main loop of the Websocket Client
+                self.main();
             }
             _ => {
                 let hint = format!("WebSocket failed to connect {:?}", framer.state());
@@ -274,237 +277,242 @@ impl<R: rand::RngCore> Websocket<R> {
             log::trace!("Websocket Read complete");
         }
     }
-}
 
-#[xous::xous_main]
-fn xmain() -> ! {
-    log_server::init_wait().unwrap();
-    log::set_max_level(log::LevelFilter::Info);
-    log::info!("my PID is {}", xous::process::id());
+    fn main() -> ! {
+        log_server::init_wait().unwrap();
+        log::set_max_level(log::LevelFilter::Info);
+        log::info!("my PID is {}", xous::process::id());
 
-    let xns = xous_names::XousNames::new().unwrap();
-    let ws_sid = xns
-        .register_name(api::SERVER_NAME_WEBSOCKET, None)
-        .expect("can't register server");
-    log::trace!("registered with NS -- {:?}", ws_sid);
-    let ws_cid = xous::connect(ws_sid).unwrap();
+        let xns = xous_names::XousNames::new().unwrap();
+        let ws_sid = xns
+            .register_name(api::SERVER_NAME_WEBSOCKET, None)
+            .expect("can't register server");
+        log::trace!("registered with NS -- {:?}", ws_sid);
+        let ws_cid = xous::connect(ws_sid).unwrap();
 
-    // build a thread that emits a regular WebSocketOp::Tick to send a KeepAliveRequest
-    spawn_tick_pump(ws_cid);
+        // build a thread that emits a regular WebSocketOp::Tick to send a KeepAliveRequest
+        spawn_tick_pump(ws_cid);
 
-    /* holds the assets of existing websockets by pid - and as such - limits each pid to 1 websocket. */
-    // TODO review the limitation of 1 websocket per pid.
-    let mut store: HashMap<NonZeroU8, Assets<ThreadRng>> = HashMap::new();
+        /* holds the assets of existing websockets by pid - and as such - limits each pid to 1 websocket. */
+        // TODO review the limitation of 1 websocket per pid.
+        let mut store: HashMap<NonZeroU8, Assets<ThreadRng>> = HashMap::new();
 
-    log::trace!("ready to accept requests");
-    loop {
-        let mut msg = xous::receive_message(ws_sid).unwrap();
-        match FromPrimitive::from_usize(msg.body.id()) {
-            Some(Opcode::Close) => {
-                log::info!("Websocket Opcode::Close");
-                if !validate_msg(&mut msg, WsError::Scalar, Opcode::Close) {
-                    continue;
-                }
-                let pid = msg.sender.pid().unwrap();
-                let mut framer: Framer<rand::rngs::ThreadRng, embedded_websocket::Client>;
-                let (wss_stream, ws_stream) = match store.get_mut(&pid) {
-                    Some(assets) => {
-                        framer = Framer::new(
-                            &mut assets.read_buf[..],
-                            &mut assets.read_cursor,
-                            &mut assets.write_buf[..],
-                            &mut assets.socket,
-                        );
-                        (&mut assets.wss_stream, &mut assets.ws_stream)
-                    }
-                    None => {
-                        log::warn!("Websocket assets not in list");
-                        xous::return_scalar(msg.sender, WsError::AssetsFault as usize).ok();
+        log::trace!("ready to accept requests");
+        loop {
+            let mut msg = xous::receive_message(ws_sid).unwrap();
+            match FromPrimitive::from_usize(msg.body.id()) {
+                Some(Opcode::Close) => {
+                    log::info!("Websocket Opcode::Close");
+                    if !validate_msg(&mut msg, WsError::Scalar, Opcode::Close) {
                         continue;
                     }
-                };
-
-                let response = match wss_stream {
-                    Some(stream) => framer.close(&mut *stream, StatusCode::NormalClosure, None),
-                    None => match ws_stream {
-                        Some(stream) => framer.close(&mut *stream, StatusCode::NormalClosure, None),
+                    let pid = msg.sender.pid().unwrap();
+                    let mut framer: Framer<rand::rngs::ThreadRng, embedded_websocket::Client>;
+                    let (wss_stream, ws_stream) = match store.get_mut(&pid) {
+                        Some(assets) => {
+                            framer = Framer::new(
+                                &mut assets.read_buf[..],
+                                &mut assets.read_cursor,
+                                &mut assets.write_buf[..],
+                                &mut assets.socket,
+                            );
+                            (&mut assets.wss_stream, &mut assets.ws_stream)
+                        }
                         None => {
-                            log::warn!("Assets missing both wss_stream and ws_stream");
+                            log::warn!("Websocket assets not in list");
                             xous::return_scalar(msg.sender, WsError::AssetsFault as usize).ok();
                             continue;
                         }
-                    },
-                };
+                    };
 
-                match response {
-                    Ok(()) => log::info!("Sent close handshake"),
-                    Err(e) => {
-                        log::warn!("Failed to send close handshake {:?}", e);
-                        xous::return_scalar(msg.sender, WsError::ProtocolError as usize).ok();
-                        continue;
-                    }
-                };
-                log::info!("Websocket Opcode::Close complete");
-            }
-            Some(Opcode::Send) => {
-                if !validate_msg(&mut msg, WsError::Memory, Opcode::Send) {
-                    continue;
-                }
-                log::info!("Websocket Opcode::Send");
-                let pid = msg.sender.pid().unwrap();
-                let mut buf = unsafe {
-                    Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap())
-                };
+                    let response = match wss_stream {
+                        Some(stream) => framer.close(&mut *stream, StatusCode::NormalClosure, None),
+                        None => match ws_stream {
+                            Some(stream) => {
+                                framer.close(&mut *stream, StatusCode::NormalClosure, None)
+                            }
+                            None => {
+                                log::warn!("Assets missing both wss_stream and ws_stream");
+                                xous::return_scalar(msg.sender, WsError::AssetsFault as usize).ok();
+                                continue;
+                            }
+                        },
+                    };
 
-                let mut framer: Framer<rand::rngs::ThreadRng, embedded_websocket::Client>;
-                let (wss_stream, ws_stream) = match store.get_mut(&pid) {
-                    Some(assets) => {
-                        framer = Framer::new(
-                            &mut assets.read_buf[..],
-                            &mut assets.read_cursor,
-                            &mut assets.write_buf[..],
-                            &mut assets.socket,
-                        );
-                        (&mut assets.wss_stream, &mut assets.ws_stream)
-                    }
-                    None => {
-                        log::info!("Websocket assets not in list");
-                        continue;
-                    }
-                };
-                match framer.state() {
-                    WebSocketState::Open => {}
-                    _ => {
-                        let hint = format!("WebSocket DOA {:?}", framer.state());
-                        buf.replace(drop(&hint)).expect("failed replace buffer");
-                        continue;
-                    }
-                }
-
-                let response = match wss_stream {
-                    Some(stream) => write(&mut framer, &mut *stream, &buf),
-                    None => match ws_stream {
-                        Some(stream) => write(&mut framer, &mut *stream, &buf),
-                        None => {
-                            log::warn!("Assets missing both wss_stream and ws_stream");
+                    match response {
+                        Ok(()) => log::info!("Sent close handshake"),
+                        Err(e) => {
+                            log::warn!("Failed to send close handshake {:?}", e);
+                            xous::return_scalar(msg.sender, WsError::ProtocolError as usize).ok();
                             continue;
                         }
-                    },
-                };
-                match response {
-                    Ok(()) => log::info!("Websocket frame sent"),
-                    Err(e) => {
-                        let hint = format!("failed to send Websocket frame {:?}", e);
-                        buf.replace(drop(&hint)).expect("failed replace buffer");
+                    };
+                    log::info!("Websocket Opcode::Close complete");
+                }
+                Some(Opcode::Send) => {
+                    if !validate_msg(&mut msg, WsError::Memory, Opcode::Send) {
                         continue;
                     }
-                };
-                log::info!("Websocket Opcode::Send complete");
-            }
-            Some(Opcode::State) => {
-                log::info!("Websocket Opcode::State");
-                if !validate_msg(&mut msg, WsError::ScalarBlock, Opcode::State) {
-                    continue;
-                }
-                let pid = msg.sender.pid().unwrap();
-                match store.get_mut(&pid) {
-                    Some(assets) => {
-                        let framer = Framer::new(
-                            &mut assets.read_buf,
-                            &mut assets.read_cursor,
-                            &mut assets.write_buf,
-                            &mut assets.socket,
-                        );
+                    log::info!("Websocket Opcode::Send");
+                    let pid = msg.sender.pid().unwrap();
+                    let mut buf = unsafe {
+                        Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap())
+                    };
 
-                        if framer.state() == WebSocketState::Open {
-                            xous::return_scalar(msg.sender, 1)
-                                .expect("failed to return WebSocketState");
+                    let mut framer: Framer<rand::rngs::ThreadRng, embedded_websocket::Client>;
+                    let (wss_stream, ws_stream) = match store.get_mut(&pid) {
+                        Some(assets) => {
+                            framer = Framer::new(
+                                &mut assets.read_buf[..],
+                                &mut assets.read_cursor,
+                                &mut assets.write_buf[..],
+                                &mut assets.socket,
+                            );
+                            (&mut assets.wss_stream, &mut assets.ws_stream)
+                        }
+                        None => {
+                            log::info!("Websocket assets not in list");
+                            continue;
+                        }
+                    };
+                    match framer.state() {
+                        WebSocketState::Open => {}
+                        _ => {
+                            let hint = format!("WebSocket DOA {:?}", framer.state());
+                            buf.replace(drop(&hint)).expect("failed replace buffer");
+                            continue;
                         }
                     }
-                    None => {
-                        xous::return_scalar(msg.sender, 0).expect("failed to return WebSocketState")
-                    }
-                };
-                log::info!("Websocket Opcode::State complete");
-            }
-            Some(Opcode::Tick) => {
-                log::info!("Websocket Opcode::Tick");
-                if !validate_msg(&mut msg, WsError::Scalar, Opcode::Tick) {
-                    continue;
+
+                    let response = match wss_stream {
+                        Some(stream) => write(&mut framer, &mut *stream, &buf),
+                        None => match ws_stream {
+                            Some(stream) => write(&mut framer, &mut *stream, &buf),
+                            None => {
+                                log::warn!("Assets missing both wss_stream and ws_stream");
+                                continue;
+                            }
+                        },
+                    };
+                    match response {
+                        Ok(()) => log::info!("Websocket frame sent"),
+                        Err(e) => {
+                            let hint = format!("failed to send Websocket frame {:?}", e);
+                            buf.replace(drop(&hint)).expect("failed replace buffer");
+                            continue;
+                        }
+                    };
+                    log::info!("Websocket Opcode::Send complete");
                 }
-                let pid = msg.sender.pid().unwrap();
-                let mut framer: Framer<rand::rngs::ThreadRng, embedded_websocket::Client>;
-                let (wss_stream, ws_stream) = match store.get_mut(&pid) {
-                    Some(assets) => {
-                        framer = Framer::new(
-                            &mut assets.read_buf[..],
-                            &mut assets.read_cursor,
-                            &mut assets.write_buf[..],
-                            &mut assets.socket,
-                        );
-                        (&mut assets.wss_stream, &mut assets.ws_stream)
-                    }
-                    None => {
-                        log::warn!("Websocket assets not in list");
-                        xous::return_scalar(msg.sender, WsError::AssetsFault as usize).ok();
+                Some(Opcode::State) => {
+                    log::info!("Websocket Opcode::State");
+                    if !validate_msg(&mut msg, WsError::ScalarBlock, Opcode::State) {
                         continue;
                     }
-                };
+                    let pid = msg.sender.pid().unwrap();
+                    match store.get_mut(&pid) {
+                        Some(assets) => {
+                            let framer = Framer::new(
+                                &mut assets.read_buf,
+                                &mut assets.read_cursor,
+                                &mut assets.write_buf,
+                                &mut assets.socket,
+                            );
 
-                // TODO review keep alive request technique
-                let frame_buf = "keep alive please :-)".as_bytes();
+                            if framer.state() == WebSocketState::Open {
+                                xous::return_scalar(msg.sender, 1)
+                                    .expect("failed to return WebSocketState");
+                            }
+                        }
+                        None => xous::return_scalar(msg.sender, 0)
+                            .expect("failed to return WebSocketState"),
+                    };
+                    log::info!("Websocket Opcode::State complete");
+                }
+                Some(Opcode::Tick) => {
+                    log::info!("Websocket Opcode::Tick");
+                    if !validate_msg(&mut msg, WsError::Scalar, Opcode::Tick) {
+                        continue;
+                    }
+                    let pid = msg.sender.pid().unwrap();
+                    let mut framer: Framer<rand::rngs::ThreadRng, embedded_websocket::Client>;
+                    let (wss_stream, ws_stream) = match store.get_mut(&pid) {
+                        Some(assets) => {
+                            framer = Framer::new(
+                                &mut assets.read_buf[..],
+                                &mut assets.read_cursor,
+                                &mut assets.write_buf[..],
+                                &mut assets.socket,
+                            );
+                            (&mut assets.wss_stream, &mut assets.ws_stream)
+                        }
+                        None => {
+                            log::warn!("Websocket assets not in list");
+                            xous::return_scalar(msg.sender, WsError::AssetsFault as usize).ok();
+                            continue;
+                        }
+                    };
 
-                let response = match wss_stream {
-                    Some(stream) => framer.write(&mut *stream, MessageType::Text, true, &frame_buf),
+                    // TODO review keep alive request technique
+                    let frame_buf = "keep alive please :-)".as_bytes();
 
-                    None => match ws_stream {
+                    let response = match wss_stream {
                         Some(stream) => {
                             framer.write(&mut *stream, MessageType::Text, true, &frame_buf)
                         }
 
-                        None => {
-                            log::warn!("Assets missing both wss_stream and ws_stream");
-                            xous::return_scalar(msg.sender, WsError::AssetsFault as usize).ok();
+                        None => match ws_stream {
+                            Some(stream) => {
+                                framer.write(&mut *stream, MessageType::Text, true, &frame_buf)
+                            }
+
+                            None => {
+                                log::warn!("Assets missing both wss_stream and ws_stream");
+                                xous::return_scalar(msg.sender, WsError::AssetsFault as usize).ok();
+                                continue;
+                            }
+                        },
+                    };
+
+                    match response {
+                        Ok(()) => log::info!("Websocket keep-alive request sent"),
+                        Err(e) => {
+                            log::info!("failed to send Websocket keep-alive request {:?}", e);
                             continue;
                         }
-                    },
-                };
+                    };
 
-                match response {
-                    Ok(()) => log::info!("Websocket keep-alive request sent"),
-                    Err(e) => {
-                        log::info!("failed to send Websocket keep-alive request {:?}", e);
+                    log::info!("Websocket Opcode::Tick complete");
+                }
+
+                Some(Opcode::Quit) => {
+                    log::warn!("Websocket Opcode::Quit");
+                    if !validate_msg(&mut msg, WsError::Scalar, Opcode::Quit) {
                         continue;
                     }
-                };
-
-                log::info!("Websocket Opcode::Tick complete");
-            }
-
-            Some(Opcode::Quit) => {
-                log::warn!("Websocket Opcode::Quit");
-                if !validate_msg(&mut msg, WsError::Scalar, Opcode::Quit) {
-                    continue;
-                }
-                let close_op = Opcode::Close.to_usize().unwrap();
-                for (_pid, assets) in &mut store {
-                    xous::send_message(assets.cid, xous::Message::new_scalar(close_op, 0, 0, 0, 0))
+                    let close_op = Opcode::Close.to_usize().unwrap();
+                    for (_pid, assets) in &mut store {
+                        xous::send_message(
+                            assets.cid,
+                            xous::Message::new_scalar(close_op, 0, 0, 0, 0),
+                        )
                         .expect("couldn't send Websocket poll");
+                    }
+                    log::warn!("Websocket Opcode::Quit complete");
+                    break;
                 }
-                log::warn!("Websocket Opcode::Quit complete");
-                break;
-            }
-            None => {
-                log::error!("couldn't convert opcode: {:?}", msg);
+                None => {
+                    log::error!("couldn't convert opcode: {:?}", msg);
+                }
             }
         }
+        // clean up our program
+        log::trace!("main loop exit, destroying servers");
+        xns.unregister_server(ws_sid).unwrap();
+        xous::destroy_server(ws_sid).unwrap();
+        log::trace!("quitting");
+        xous::terminate_process(0)
     }
-    // clean up our program
-    log::trace!("main loop exit, destroying servers");
-    xns.unregister_server(ws_sid).unwrap();
-    xous::destroy_server(ws_sid).unwrap();
-    log::trace!("quitting");
-    xous::terminate_process(0)
 }
 
 // build a thread that emits a regular WebSocketOp::Tick to send a KeepAliveRequest
