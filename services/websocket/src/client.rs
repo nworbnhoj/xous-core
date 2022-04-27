@@ -580,11 +580,6 @@ fn spawn_tick_pump(cid: CID) {
     });
 }
 
-/** helper function to return hints from opcode panics */
-fn drop(hint: &str) -> api::Return {
-    log::warn!("{}", hint);
-    api::Return::Failure(xous_ipc::String::from_str(hint))
-}
 
 /** read all available frames from the websocket and relay each frame to the caller_id */
 fn read<E, R, S, T>(framer: &mut Framer<R, S>, stream: &mut T, cid: CID, opcode: u32)

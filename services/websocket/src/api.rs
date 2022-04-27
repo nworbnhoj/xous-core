@@ -154,3 +154,9 @@ pub(crate) fn validate_msg(env: &mut xous::MessageEnvelope, expected: WsError, o
     };
     true
 }
+
+/** helper function to return hints from opcode panics */
+pub(crate) fn drop(hint: &str) -> api::Return {
+    log::warn!("{}", hint);
+    api::Return::Failure(xous_ipc::String::from_str(hint))
+}
