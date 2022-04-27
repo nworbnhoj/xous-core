@@ -73,11 +73,6 @@ pub enum Opcode {
     ///     buf.lend(ws_cid, Opcode::Open).map(|_| ());
     ///     let sub_protocol: Return::SubProtocol(protocol) = buf.to_original::<Return, _>().unwrap()
     Open,
-    /// Poll websockets for inbound frames.
-    /// An independent background thread is spawned to pump a regular Poll (LISTENER_POLL_INTERVAL_MS)
-    /// so there is normally no need to call this Opcode.
-    /// xous::Message::new_scalar(Opcode::Poll, _, _, _, _)
-    Poll,
     /// send a websocket frame
     Send,
     /// Return the current State of the websocket
@@ -383,17 +378,6 @@ fn xmain() -> ! {
                 buf.replace(response).expect("failed replace buffer");
                 log::info!("Websocket Opcode::Open complete");
             }
-            Some(Opcode::Poll) => {
-                if !validate_msg(&mut msg, WsError::Scalar, Opcode::Poll) {
-                    continue;
-                }
-                // Check each websocket for an inbound frame to read and send to the cid
-
-                for (pid, assets) in &mut store {
-                    log::trace!("Websocket Opcode::Poll PID={:?}", pid);
-                }
-                log::trace!("Websocket Opcode::Poll complete");
-            }
             Some(Opcode::Send) => {
                 if !validate_msg(&mut msg, WsError::Memory, Opcode::Send) {
                     continue;
@@ -593,6 +577,7 @@ fn spawn_poll<R: rand::RngCore>(
                     continue;
                 }
 
+                log::trace!("Websocket Read");
                 match wss_stream {
                     Some(stream) => read(&mut framer, &mut *stream, cid, opcode),
                     None => match ws_stream {
@@ -603,7 +588,8 @@ fn spawn_poll<R: rand::RngCore>(
                             continue;
                         }
                     },
-                };
+                };                
+                log::trace!("Websocket Read complete");
             }
         }
     });
