@@ -304,22 +304,6 @@ fn xmain() -> ! {
                             wss_stream,
                             ws_client,
                         );
-
-                        // Store the open websocket indexed by the calling pid
-                        store.insert(
-                            pid,
-                            Assets {
-                                socket: ws_client,
-                                wss_stream: wss_stream,
-                                ws_stream: ws_stream,
-                                tcp_stream: tcp_clone,
-                                read_buf: read_buf,
-                                read_cursor: read_cursor,
-                                write_buf: write_buf,
-                                cid: ws_config.cid,
-                                opcode: ws_config.opcode,
-                            },
-                        );
                     }
                     _ => {
                         let hint = format!("WebSocket failed to connect {:?}", framer.state());
@@ -530,6 +514,10 @@ fn spawn_poll<R: rand::RngCore>(
             loop {
                 tt.sleep_ms(LISTENER_POLL_INTERVAL_MS.as_millis().try_into().unwrap())
                     .unwrap();
+                    
+                if framer.state() != WebSocketState::Open {
+                    break;
+                }
 
                 if empty(&mut tcp_stream) {
                     continue;
