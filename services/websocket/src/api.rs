@@ -5,17 +5,10 @@
 #[allow(dead_code)]
 pub const SERVER_NAME_WEBSOCKET: &str = "_Websocket Service_";
 
-use std::time::Duration;
 
-/** time between reglar websocket keep-alive requests */
-pub(crate) const KEEPALIVE_TIMEOUT_SECONDS: Duration = Duration::from_secs(55);
-/** time between regulr pol for inboud frames on open websockets */
-pub(crate) const LISTENER_POLL_INTERVAL_MS: Duration = Duration::from_millis(250);
 /** limit on the byte length of url strings */
 pub(crate) const URL_LENGTH_LIMIT: usize = 200;
 /** limit on the byte length of error hint strings */
-pub(crate) const HINT_LEN: usize = 128;
-/** limit on the byte length of certificate authority strings */
 pub const CA_LEN: usize = 1402;
 /** limit on the byte length of base-url strings */
 pub(crate) const BASEURL_LEN: usize = 128;
@@ -28,15 +21,7 @@ pub(crate) const PASSWORD_LEN: usize = 128;
 /** limit on the byte length of websocket sub-protocol strings */
 pub const SUB_PROTOCOL_LEN: usize = 24;
 
-/*
- A websocket header requires at least 14 bytes of the websocket buffer
- ( see https://crates.io/crates/embedded-websocket ) leaving the remainder
- available for the payload. This relates directly to the frame buffer.
- There may be advantage in independently specifying the read, frame, and write buffer sizes.
- TODO review/test/optimise WEBSOCKET_BUFFER_LEN
-*/
-pub(crate) const WEBSOCKET_BUFFER_LEN: usize = 4096;
-pub(crate) const WEBSOCKET_PAYLOAD_LEN: usize = 4080;
+
 
 /// These opcodes can be called by anyone at any time
 #[derive(num_derive::FromPrimitive, num_derive::ToPrimitive, Debug)]
@@ -61,22 +46,12 @@ pub enum Opcode {
     ///     buf.lend(ws_cid, Opcode::Open).map(|_| ());
     ///     let sub_protocol: Return::SubProtocol(protocol) = buf.to_original::<Return, _>().unwrap()
     Open,
-    /// Poll websockets for inbound frames.
-    /// An independent background thread is spawned to pump a regular Poll (LISTENER_POLL_INTERVAL_MS)
-    /// so there is normally no need to call this Opcode.
-    /// xous::Message::new_scalar(Opcode::Poll, _, _, _, _)
-    Poll,
     /// send a websocket frame
     Send,
     /// Return the current State of the websocket
     /// 1=Open, 0=notOpen
     /// xous::Message::new_scalar(Opcode::State, _, _, _, _)
     State,
-    /// Send a KeepAliveRequest.
-    /// An independent background thread is spawned to pump a regular Tick (KEEPALIVE_TIMEOUT_SECONDS)
-    /// so there is normally no need to call this Opcode.
-    /// xous::Message::new_scalar(Opcode::Tick, _, _, _, _)
-    Tick,
     /// Close all websockets and shutdown server
     /// xous::Message::new_scalar(Opcode::Quit, _, _, _, _)
     Quit,
@@ -102,11 +77,6 @@ pub(crate) enum WsError {
 pub enum Return {
     SubProtocol(xous_ipc::String<SUB_PROTOCOL_LEN>),
     Failure(xous_ipc::String<HINT_LEN>),
-}
-
-#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-pub struct Frame {
-    pub bytes: [u8; WEBSOCKET_PAYLOAD_LEN],
 }
 
 // a structure for defining the setup of a Websocket.

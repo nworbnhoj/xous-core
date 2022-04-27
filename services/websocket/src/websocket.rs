@@ -1,8 +1,7 @@
 #![cfg_attr(target_os = "none", no_std)]
 #![cfg_attr(target_os = "none", no_main)]
 
-mod api;
-use api::*;
+
 
 use derive_deref::*;
 use embedded_websocket as ws;
@@ -25,6 +24,76 @@ use ws::WebSocketSendMessageType as MessageType;
 use ws::{WebSocketClient, WebSocketOptions, WebSocketState};
 use xous::CID;
 use xous_ipc::Buffer;
+
+use std::time::Duration;
+
+/** time between reglar websocket keep-alive requests */
+pub(crate) const KEEPALIVE_TIMEOUT_SECONDS: Duration = Duration::from_secs(55);
+/** time between regular poll for inbound frames */
+pub(crate) const LISTENER_POLL_INTERVAL_MS: Duration = Duration::from_millis(250);
+pub(crate) const HINT_LEN: usize = 128;
+/** limit on the byte length of certificate authority strings */
+/*
+ A websocket header requires at least 14 bytes of the websocket buffer
+ ( see https://crates.io/crates/embedded-websocket ) leaving the remainder
+ available for the payload. This relates directly to the frame buffer.
+ There may be advantage in independently specifying the read, frame, and write buffer sizes.
+ TODO review/test/optimise WEBSOCKET_BUFFER_LEN
+*/
+pub(crate) const WEBSOCKET_BUFFER_LEN: usize = 4096;
+pub(crate) const WEBSOCKET_PAYLOAD_LEN: usize = 4080;
+
+
+
+
+#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+pub struct Frame {
+    pub bytes: [u8; WEBSOCKET_PAYLOAD_LEN],
+}
+
+#[derive(num_derive::FromPrimitive, num_derive::ToPrimitive, Debug)]
+pub enum Opcode {
+    /// Close an existing websocket.
+    /// xous::Message::new_scalar(Opcode::Close, _, _, _, _)
+    Close = 1,
+    /// Open a new websocket.
+    /// Attempts to establish a new websocket connection based on WebsocketConfig and return
+    /// the sub_protocol nominated by the server (if any).
+    ///     let ws_config = WebsocketConfig {
+    ///         certificate_authority:     optional ca for a TLS connection - fallback to tcp
+    ///         base_url:                  the url of the target websocket server
+    ///         path:                      a path to apend to the url
+    ///         use_credentials:           true to authenticate
+    ///         login:                     authentication username
+    ///         password:                  authentication password
+    ///         cid:                       the callback id for inbound data frames
+    ///         opcode:                    the opcode for inbound data frames
+    ///     };
+    ///     let buf = Buffer::into_buf(ws_config);
+    ///     buf.lend(ws_cid, Opcode::Open).map(|_| ());
+    ///     let sub_protocol: Return::SubProtocol(protocol) = buf.to_original::<Return, _>().unwrap()
+    Open,
+    /// Poll websockets for inbound frames.
+    /// An independent background thread is spawned to pump a regular Poll (LISTENER_POLL_INTERVAL_MS)
+    /// so there is normally no need to call this Opcode.
+    /// xous::Message::new_scalar(Opcode::Poll, _, _, _, _)
+    Poll,
+    /// send a websocket frame
+    Send,
+    /// Return the current State of the websocket
+    /// 1=Open, 0=notOpen
+    /// xous::Message::new_scalar(Opcode::State, _, _, _, _)
+    State,
+    /// Send a KeepAliveRequest.
+    /// An independent background thread is spawned to pump a regular Tick (KEEPALIVE_TIMEOUT_SECONDS)
+    /// so there is normally no need to call this Opcode.
+    /// xous::Message::new_scalar(Opcode::Tick, _, _, _, _)
+    Tick,
+    /// Close all websockets and shutdown server
+    /// xous::Message::new_scalar(Opcode::Quit, _, _, _, _)
+    Quit,
+}
+
 
 #[derive(Clone, Copy, Debug, Deref, DerefMut)]
 struct WsStream<T: Read + Write>(T);
@@ -315,7 +384,6 @@ fn xmain() -> ! {
                 log::info!("Websocket Opcode::Open complete");
             }
             Some(Opcode::Poll) => {
-                log::trace!("Websocket Opcode::Poll");
                 if !validate_msg(&mut msg, WsError::Scalar, Opcode::Poll) {
                     continue;
                 }
@@ -514,6 +582,8 @@ fn spawn_poll<R: rand::RngCore>(
             loop {
                 tt.sleep_ms(LISTENER_POLL_INTERVAL_MS.as_millis().try_into().unwrap())
                     .unwrap();
+                    
+                log::trace!("Websocket Poll");
                     
                 if framer.state() != WebSocketState::Open {
                     break;
