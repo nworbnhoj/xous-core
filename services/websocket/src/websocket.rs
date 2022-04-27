@@ -258,7 +258,7 @@ impl<R: rand::RngCore> Websocket<R> {
                 break;
             }
 
-            if empty(&mut tcp_stream) {
+            if self.empty(&mut tcp_stream) {
                 continue;
             }
 
@@ -513,6 +513,25 @@ impl<R: rand::RngCore> Websocket<R> {
         log::trace!("quitting");
         xous::terminate_process(0)
     }
+
+    fn empty(stream: &mut TcpStream) -> bool {
+        stream
+            .set_nonblocking(true)
+            .expect("failed to set TCP Stream to non-blocking");
+        let mut frame_buf = [0u8; 8];
+        let empty = match stream.peek(&mut frame_buf) {
+            Ok(_) => false,
+            Err(ref e) if e.kind() == ErrorKind::WouldBlock => true,
+            Err(e) => {
+                log::warn!("TCP IO error: {}", e);
+                true
+            }
+        };
+        stream
+            .set_nonblocking(false)
+            .expect("failed to set TCP Stream to non-blocking");
+        empty
+    }
 }
 
 // build a thread that emits a regular WebSocketOp::Tick to send a KeepAliveRequest
@@ -543,25 +562,6 @@ fn spawn_tick_pump(cid: CID) {
 fn drop(hint: &str) -> api::Return {
     log::warn!("{}", hint);
     api::Return::Failure(xous_ipc::String::from_str(hint))
-}
-
-fn empty(stream: &mut TcpStream) -> bool {
-    stream
-        .set_nonblocking(true)
-        .expect("failed to set TCP Stream to non-blocking");
-    let mut frame_buf = [0u8; 8];
-    let empty = match stream.peek(&mut frame_buf) {
-        Ok(_) => false,
-        Err(ref e) if e.kind() == ErrorKind::WouldBlock => true,
-        Err(e) => {
-            log::warn!("TCP IO error: {}", e);
-            true
-        }
-    };
-    stream
-        .set_nonblocking(false)
-        .expect("failed to set TCP Stream to non-blocking");
-    empty
 }
 
 /** read all available frames from the websocket and relay each frame to the caller_id */
