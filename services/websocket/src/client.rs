@@ -96,7 +96,7 @@ impl<T: Read + Write> ws::framer::Stream<Error> for WsStream<T> {
     }
 }
 
-struct Websocket<R: rand::RngCore> {
+struct Client<R: rand::RngCore> {
     /** the configuration of an open websocket */
     socket: WebSocketClient<R>,
     /** a websocket stream when opened on a tls connection */
@@ -117,7 +117,7 @@ struct Websocket<R: rand::RngCore> {
     opcode: u32,
 }
 
-impl<R: rand::RngCore> Websocket<R> {
+impl<R: rand::RngCore> Client<R> {
     pub(crate) fn new(
         &mut self,
         path: &'a str,

@@ -3,8 +3,8 @@
 
 mod api;
 use api::*;
-mod websocket;
-use websocket::*;
+mod client;
+use client::*;
 
 use derive_deref::*;
 use embedded_websocket as ws;
