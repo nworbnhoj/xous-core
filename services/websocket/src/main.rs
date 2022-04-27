@@ -655,41 +655,4 @@ fn ssl_config(certificate_authority: &str) -> rustls::ClientConfig {
         .with_no_client_auth()
 }
 
-fn validate_msg(env: &mut xous::MessageEnvelope, expected: WsError, opcode: Opcode) -> bool {
-    let is_blocking = env.body.is_blocking();
-    match env.body.memory_message_mut() {
-        None => {
-            if (expected == WsError::Scalar && is_blocking)
-                || (expected == WsError::ScalarBlock && !is_blocking)
-            {
-                log::warn!("invalid xous:MessageEnvelope for Opcode::{:#?}", opcode);
-                xous::return_scalar(env.sender, expected as usize).ok();
-                return false;
-            };
-        }
-        Some(body) => {
-            if (expected == WsError::Memory && is_blocking)
-                || (expected == WsError::MemoryBlock && !is_blocking)
-            {
-                log::warn!("invalid xous:MessageEnvelope for Opcode::{:#?}", opcode);
-                body.valid = None;
-                let s: &mut [u8] = body.buf.as_slice_mut();
-                let mut i = s.iter_mut();
 
-                // Duplicate error to ensure it's seen as an error regardless of byte order/return type
-                // This is necessary because errors are encoded as `u8` slices, but "good"
-                // responses may be encoded as `u16` or `u32` slices.
-                *i.next().expect("failed to set msg byte") = 1;
-                *i.next().expect("failed to set msg byte") = 1;
-                *i.next().expect("failed to set msg byte") = 1;
-                *i.next().expect("failed to set msg byte") = 1;
-                *i.next().expect("failed to set msg byte") = expected as u8;
-                *i.next().expect("failed to set msg byte") = 0;
-                *i.next().expect("failed to set msg byte") = 0;
-                *i.next().expect("failed to set msg byte") = 0;
-                return false;
-            }
-        }
-    };
-    true
-}
