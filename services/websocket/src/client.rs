@@ -1,6 +1,8 @@
 #![cfg_attr(target_os = "none", no_std)]
 #![cfg_attr(target_os = "none", no_main)]
 
+mod poll;
+use poll::*;
 
 use derive_deref::*;
 use embedded_websocket as ws;
@@ -28,8 +30,6 @@ use std::time::Duration;
 
 /** time between reglar websocket keep-alive requests */
 pub(crate) const KEEPALIVE_TIMEOUT_SECONDS: Duration = Duration::from_secs(55);
-/** time between regular poll for inbound frames */
-pub(crate) const LISTENER_POLL_INTERVAL_MS: Duration = Duration::from_millis(250);
 pub(crate) const HINT_LEN: usize = 128;
 /** limit on the byte length of certificate authority strings */
 /*
@@ -213,10 +213,10 @@ impl<R: rand::RngCore> Client<R> {
         match framer.state() {
             WebSocketState::Open => {
                 log::info!("WebSocket connected with protocol: {:?}", sub_protocol);
-                // build a thread that regularly polls the websocket for inbound frames
-                thread::spawn({
-                    move || {
-                        self.poll(
+                
+                // start a regular poll of the websocket for inbound frames
+                
+                let mut poll = Poll::new((
                             ws_config.cid,
                             ws_config.opcode,
                             tcp_clone,
@@ -224,6 +224,10 @@ impl<R: rand::RngCore> Client<R> {
                             wss_stream,
                             ws_client,
                         );
+                
+                thread::spawn({
+                    move || {
+                        poll.main();
                     }
                 });
 
@@ -237,51 +241,6 @@ impl<R: rand::RngCore> Client<R> {
         }
     }
 
-    fn poll<R: rand::RngCore>(
-        cid: CID,
-        opcode: u32,
-        tcpStream: &mut TcpStream,
-        ws_stream: &mut Option<WsStream>,
-        wss_stream: &mut Option<WsStream>,
-        socket: WebSocketClient<R>,
-    ) {
-        let tt = ticktimer_server::Ticktimer::new().unwrap();
-
-        let mut read_buf = [0; WEBSOCKET_BUFFER_LEN];
-        let mut read_cursor = 0;
-        let mut write_buf = [0; WEBSOCKET_BUFFER_LEN];
-
-        let mut framer = Framer::new(&mut read_buf, &mut read_cursor, &mut write_buf, &mut socket);
-
-        loop {
-            tt.sleep_ms(LISTENER_POLL_INTERVAL_MS.as_millis().try_into().unwrap())
-                .unwrap();
-
-            log::trace!("Websocket Poll");
-
-            if framer.state() != WebSocketState::Open {
-                break;
-            }
-
-            if self.empty(&mut tcp_stream) {
-                continue;
-            }
-
-            log::trace!("Websocket Read");
-            match wss_stream {
-                Some(stream) => read(&mut framer, &mut *stream, cid, opcode),
-                None => match ws_stream {
-                    Some(stream) => read(&mut framer, &mut *stream, cid, opcode),
-                    None => {
-                        log::warn!("Assets missing both wss_stream and ws_stream");
-                        xous::return_scalar(msg.sender, WsError::AssetsFault as usize).ok();
-                        continue;
-                    }
-                },
-            };
-            log::trace!("Websocket Read complete");
-        }
-    }
 
     fn main() -> ! {
         log_server::init_wait().unwrap();
@@ -519,24 +478,7 @@ impl<R: rand::RngCore> Client<R> {
         xous::terminate_process(0)
     }
 
-    fn empty(stream: &mut TcpStream) -> bool {
-        stream
-            .set_nonblocking(true)
-            .expect("failed to set TCP Stream to non-blocking");
-        let mut frame_buf = [0u8; 8];
-        let empty = match stream.peek(&mut frame_buf) {
-            Ok(_) => false,
-            Err(ref e) if e.kind() == ErrorKind::WouldBlock => true,
-            Err(e) => {
-                log::warn!("TCP IO error: {}", e);
-                true
-            }
-        };
-        stream
-            .set_nonblocking(false)
-            .expect("failed to set TCP Stream to non-blocking");
-        empty
-    }
+
 
     /** complete the machinations of setting up a rustls::ClientConfig */
     fn ssl_config(certificate_authority: &str) -> rustls::ClientConfig {
@@ -581,28 +523,6 @@ fn spawn_tick_pump(cid: CID) {
 }
 
 
-/** read all available frames from the websocket and relay each frame to the caller_id */
-fn read<E, R, S, T>(framer: &mut Framer<R, S>, stream: &mut T, cid: CID, opcode: u32)
-where
-    E: std::fmt::Debug,
-    R: rand::RngCore,
-    T: ws::framer::Stream<E>,
-    S: ws::WebSocketType,
-{
-    let mut frame_buf = [0u8; WEBSOCKET_PAYLOAD_LEN];
-    while let Some(frame) = framer
-        .read_binary(&mut *stream, &mut frame_buf[..])
-        .expect("failed to read websocket")
-    {
-        let frame: [u8; WEBSOCKET_PAYLOAD_LEN] = frame
-            .try_into()
-            .expect("websocket frame too large for buffer");
-        let buf = Buffer::into_buf(Frame { bytes: frame })
-            .expect("failed to serialize websocket frame into buffer");
-        buf.send(cid, opcode)
-            .expect("failed to relay websocket frame");
-    }
-}
 
 fn write<E, R, S, T>(
     framer: &mut Framer<R, S>,
