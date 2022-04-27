@@ -176,7 +176,7 @@ impl<R: rand::RngCore> Websocket<R> {
             let ca = ca
                 .as_str()
                 .expect("certificate_authority utf-8 decode error");
-            let tls_connector = RustlsConnector::from(ssl_config(ca));
+            let tls_connector = RustlsConnector::from(Self.ssl_config(ca));
             self.tls_stream = match tls_connector.connect(url.host_str().unwrap(), tcp_stream) {
                 Ok(tls_stream) => {
                     log::info!("TLS connected to {:?}", url.host_str().unwrap());
@@ -532,6 +532,23 @@ impl<R: rand::RngCore> Websocket<R> {
             .expect("failed to set TCP Stream to non-blocking");
         empty
     }
+
+    /** complete the machinations of setting up a rustls::ClientConfig */
+    fn ssl_config(certificate_authority: &str) -> rustls::ClientConfig {
+        let mut cert_bytes = std::io::Cursor::new(&certificate_authority);
+        let roots = rustls_pemfile::certs(&mut cert_bytes).expect("parseable PEM files");
+        let roots = roots.iter().map(|v| rustls::Certificate(v.clone()));
+
+        let mut root_certs = rustls::RootCertStore::empty();
+        for root in roots {
+            root_certs.add(&root).unwrap();
+        }
+
+        rustls::ClientConfig::builder()
+            .with_safe_defaults()
+            .with_root_certificates(root_certs)
+            .with_no_client_auth()
+    }
 }
 
 // build a thread that emits a regular WebSocketOp::Tick to send a KeepAliveRequest
@@ -614,23 +631,6 @@ where
         start = start + WEBSOCKET_PAYLOAD_LEN;
     }
     ret
-}
-
-/** complete the machinations of setting up a rustls::ClientConfig */
-fn ssl_config(certificate_authority: &str) -> rustls::ClientConfig {
-    let mut cert_bytes = std::io::Cursor::new(&certificate_authority);
-    let roots = rustls_pemfile::certs(&mut cert_bytes).expect("parseable PEM files");
-    let roots = roots.iter().map(|v| rustls::Certificate(v.clone()));
-
-    let mut root_certs = rustls::RootCertStore::empty();
-    for root in roots {
-        root_certs.add(&root).unwrap();
-    }
-
-    rustls::ClientConfig::builder()
-        .with_safe_defaults()
-        .with_root_certificates(root_certs)
-        .with_no_client_auth()
 }
 
 fn validate_msg(env: &mut xous::MessageEnvelope, expected: WsError, opcode: Opcode) -> bool {
