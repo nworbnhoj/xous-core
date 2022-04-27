@@ -101,3 +101,16 @@ pub struct WebsocketConfig {
     /** the opcode for inbound data frames */
     pub opcode: u32,
 }
+
+#[derive(Clone, Copy, Debug, Deref, DerefMut)]
+struct WsStream<T: Read + Write>(T);
+
+impl<T: Read + Write> ws::framer::Stream<Error> for WsStream<T> {
+    fn read(&mut self, buf: &mut [u8]) -> std::result::Result<usize, Error> {
+        self.0.read(buf)
+    }
+
+    fn write_all(&mut self, buf: &[u8]) -> std::result::Result<(), Error> {
+        self.0.write_all(buf)
+    }
+}
