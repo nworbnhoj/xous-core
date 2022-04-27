@@ -67,6 +67,22 @@ pub enum Opcode {
     Quit,
 }
 
+#[derive(num_derive::FromPrimitive, num_derive::ToPrimitive, Debug, PartialEq)]
+pub(crate) enum WsError {
+    /// This Opcode accepts Scalar calls
+    Scalar,
+    /// This Opcode accepts Blocking Scalar calls
+    ScalarBlock,
+    /// This Opcode accepts Memory calls
+    Memory,
+    /// This Opcode accepts Blocking Memory calls
+    MemoryBlock,
+    /// Websocket assets corruption
+    AssetsFault,
+    /// Error in Websocket protocol
+    ProtocolError,
+}
+
 #[derive(Clone, Copy, Debug, Deref, DerefMut)]
 struct WsStream<T: Read + Write>(T);
 

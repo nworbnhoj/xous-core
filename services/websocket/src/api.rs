@@ -20,6 +20,7 @@ pub(crate) const LOGIN_LEN: usize = 128;
 pub(crate) const PASSWORD_LEN: usize = 128;
 /** limit on the byte length of websocket sub-protocol strings */
 pub const SUB_PROTOCOL_LEN: usize = 24;
+pub(crate) const HINT_LEN: usize = 128;
 
 
 
