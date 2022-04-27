@@ -208,20 +208,70 @@ impl<R: rand::RngCore> Websocket<R> {
         match framer.state() {
             WebSocketState::Open => {
                 log::info!("WebSocket connected with protocol: {:?}", sub_protocol);
-
-                spawn_poll(
-                    ws_config.cid,
-                    ws_config.opcode,
-                    tcp_clone,
-                    ws_stream,
-                    wss_stream,
-                    ws_client,
-                );
+                // build a thread that regularly polls the websocket for inbound frames
+                thread::spawn({
+                    move || {
+                        self.poll(
+                            ws_config.cid,
+                            ws_config.opcode,
+                            tcp_clone,
+                            ws_stream,
+                            wss_stream,
+                            ws_client,
+                        );
+                    }
+                });
             }
             _ => {
                 let hint = format!("WebSocket failed to connect {:?}", framer.state());
                 response = drop(&hint);
             }
+        }
+    }
+
+    fn poll<R: rand::RngCore>(
+        cid: CID,
+        opcode: u32,
+        tcpStream: &mut TcpStream,
+        ws_stream: &mut Option<WsStream>,
+        wss_stream: &mut Option<WsStream>,
+        socket: WebSocketClient<R>,
+    ) {
+        let tt = ticktimer_server::Ticktimer::new().unwrap();
+
+        let mut read_buf = [0; WEBSOCKET_BUFFER_LEN];
+        let mut read_cursor = 0;
+        let mut write_buf = [0; WEBSOCKET_BUFFER_LEN];
+
+        let mut framer = Framer::new(&mut read_buf, &mut read_cursor, &mut write_buf, &mut socket);
+
+        loop {
+            tt.sleep_ms(LISTENER_POLL_INTERVAL_MS.as_millis().try_into().unwrap())
+                .unwrap();
+
+            log::trace!("Websocket Poll");
+
+            if framer.state() != WebSocketState::Open {
+                break;
+            }
+
+            if empty(&mut tcp_stream) {
+                continue;
+            }
+
+            log::trace!("Websocket Read");
+            match wss_stream {
+                Some(stream) => read(&mut framer, &mut *stream, cid, opcode),
+                None => match ws_stream {
+                    Some(stream) => read(&mut framer, &mut *stream, cid, opcode),
+                    None => {
+                        log::warn!("Assets missing both wss_stream and ws_stream");
+                        xous::return_scalar(msg.sender, WsError::AssetsFault as usize).ok();
+                        continue;
+                    }
+                },
+            };
+            log::trace!("Websocket Read complete");
         }
     }
 }
@@ -455,58 +505,6 @@ fn xmain() -> ! {
     xous::destroy_server(ws_sid).unwrap();
     log::trace!("quitting");
     xous::terminate_process(0)
-}
-
-// build a thread that regularly polls the websocket for inbound frames
-fn spawn_poll<R: rand::RngCore>(
-    cid: CID,
-    opcode: u32,
-    tcpStream: &mut TcpStream,
-    ws_stream: &mut Option<WsStream>,
-    wss_stream: &mut Option<WsStream>,
-    socket: WebSocketClient<R>,
-) {
-    thread::spawn({
-        move || {
-            let tt = ticktimer_server::Ticktimer::new().unwrap();
-
-            let mut read_buf = [0; WEBSOCKET_BUFFER_LEN];
-            let mut read_cursor = 0;
-            let mut write_buf = [0; WEBSOCKET_BUFFER_LEN];
-
-            let mut framer =
-                Framer::new(&mut read_buf, &mut read_cursor, &mut write_buf, &mut socket);
-
-            loop {
-                tt.sleep_ms(LISTENER_POLL_INTERVAL_MS.as_millis().try_into().unwrap())
-                    .unwrap();
-
-                log::trace!("Websocket Poll");
-
-                if framer.state() != WebSocketState::Open {
-                    break;
-                }
-
-                if empty(&mut tcp_stream) {
-                    continue;
-                }
-
-                log::trace!("Websocket Read");
-                match wss_stream {
-                    Some(stream) => read(&mut framer, &mut *stream, cid, opcode),
-                    None => match ws_stream {
-                        Some(stream) => read(&mut framer, &mut *stream, cid, opcode),
-                        None => {
-                            log::warn!("Assets missing both wss_stream and ws_stream");
-                            xous::return_scalar(msg.sender, WsError::AssetsFault as usize).ok();
-                            continue;
-                        }
-                    },
-                };
-                log::trace!("Websocket Read complete");
-            }
-        }
-    });
 }
 
 // build a thread that emits a regular WebSocketOp::Tick to send a KeepAliveRequest
