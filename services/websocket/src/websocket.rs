@@ -295,6 +295,15 @@ fn xmain() -> ! {
                 match framer.state() {
                     WebSocketState::Open => {
                         log::info!("WebSocket connected with protocol: {:?}", sub_protocol);
+                        
+                        spawn_poll(
+                            ws_config.cid,
+                            ws_config.opcode,
+                            tcp_clone,
+                            ws_stream,
+                            wss_stream,
+                            ws_client,
+                        );
 
                         // Store the open websocket indexed by the calling pid
                         store.insert(
@@ -330,39 +339,6 @@ fn xmain() -> ! {
 
                 for (pid, assets) in &mut store {
                     log::trace!("Websocket Opcode::Poll PID={:?}", pid);
-
-                    if empty(&mut assets.tcp_stream) {
-                        continue;
-                    }
-
-                    let mut framer = Framer::new(
-                        &mut assets.read_buf,
-                        &mut assets.read_cursor,
-                        &mut assets.write_buf,
-                        &mut assets.socket,
-                    );
-
-                    let (wss_stream, ws_stream, cid, opcode) = {
-                        (
-                            &mut assets.wss_stream,
-                            &mut assets.ws_stream,
-                            assets.cid,
-                            assets.opcode,
-                        )
-                    };
-
-                    match wss_stream {
-                        Some(stream) => read(&mut framer, &mut *stream, cid, opcode),
-                        None => match ws_stream {
-                            Some(stream) => read(&mut framer, &mut *stream, cid, opcode),
-
-                            None => {
-                                log::warn!("Assets missing both wss_stream and ws_stream");
-                                xous::return_scalar(msg.sender, WsError::AssetsFault as usize).ok();
-                                continue;
-                            }
-                        },
-                    };
                 }
                 log::trace!("Websocket Opcode::Poll complete");
             }
@@ -527,25 +503,49 @@ fn xmain() -> ! {
     xous::terminate_process(0)
 }
 
-// build a thread that emits a regular WebSocketOp::Poll to check for inbound websocket frames
-fn spawn_poll_pump(cid: CID) {
+// build a thread that regularly polls the websocket for inbound frames
+fn spawn_poll<R: rand::RngCore>(
+    cid: CID,
+    opcode: u32,
+    tcpStream: &mut TcpStream,
+    ws_stream: &mut Option<WsStream>,
+    wss_stream: &mut Option<WsStream>,
+    socket: WebSocketClient<R>,
+) {
     thread::spawn({
         move || {
             let tt = ticktimer_server::Ticktimer::new().unwrap();
+            
+            let mut read_buf = [0; WEBSOCKET_BUFFER_LEN];
+            let mut read_cursor = 0;
+            let mut write_buf = [0; WEBSOCKET_BUFFER_LEN];
+
+            let mut framer = Framer::new(
+                &mut read_buf,
+                &mut read_cursor,
+                &mut write_buf,
+                &mut socket,
+            );
+
             loop {
                 tt.sleep_ms(LISTENER_POLL_INTERVAL_MS.as_millis().try_into().unwrap())
                     .unwrap();
-                xous::send_message(
-                    cid,
-                    xous::Message::new_scalar(
-                        Opcode::Poll.to_usize().unwrap(),
-                        LISTENER_POLL_INTERVAL_MS.as_secs().try_into().unwrap(),
-                        0,
-                        0,
-                        0,
-                    ),
-                )
-                .expect("couldn't send Websocket poll");
+
+                if empty(&mut tcp_stream) {
+                    continue;
+                }
+
+                match wss_stream {
+                    Some(stream) => read(&mut framer, &mut *stream, cid, opcode),
+                    None => match ws_stream {
+                        Some(stream) => read(&mut framer, &mut *stream, cid, opcode),
+                        None => {
+                            log::warn!("Assets missing both wss_stream and ws_stream");
+                            xous::return_scalar(msg.sender, WsError::AssetsFault as usize).ok();
+                            continue;
+                        }
+                    },
+                };
             }
         }
     });
@@ -623,7 +623,11 @@ where
     }
 }
 
-fn write<E, R, S, T>(framer: &mut Framer<R, S>, stream: &mut T, buffer: &[u8]) -> Result<(), FramerError<E>>
+fn write<E, R, S, T>(
+    framer: &mut Framer<R, S>,
+    stream: &mut T,
+    buffer: &[u8],
+) -> Result<(), FramerError<E>>
 where
     E: std::fmt::Debug,
     R: rand::RngCore,
@@ -644,7 +648,7 @@ where
         }
         ret = framer.write(&mut *stream, MessageType::Binary, end_of_message, slice);
         start = start + WEBSOCKET_PAYLOAD_LEN;
-    };
+    }
     ret
 }
 
