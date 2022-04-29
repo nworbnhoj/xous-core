@@ -1,25 +1,21 @@
 #![cfg_attr(target_os = "none", no_std)]
 #![cfg_attr(target_os = "none", no_main)]
 
-use derive_deref::*;
+use super::*;
+use crate::manager::Frame;
+use api::*;
+
 use embedded_websocket as ws;
-use num_traits::{FromPrimitive, ToPrimitive};
 use rand::rngs::ThreadRng;
 use rustls::{ClientConnection, StreamOwned};
 use rustls_connector::*;
-use std::num::NonZeroU8;
 use std::{
-    collections::HashMap,
     convert::TryInto,
-    io::{Error, ErrorKind, Read, Write},
+    io::{ErrorKind, Read, Write},
     net::TcpStream,
-    thread,
 };
-use url::Url;
-use ws::framer::{Framer, FramerError};
-use ws::WebSocketCloseStatusCode as StatusCode;
-use ws::WebSocketSendMessageType as MessageType;
-use ws::{WebSocketClient, WebSocketOptions, WebSocketState};
+use ws::framer::Framer;
+use ws::{WebSocketClient, WebSocketState};
 use xous::CID;
 use xous_ipc::Buffer;
 
@@ -38,14 +34,13 @@ pub(crate) const LISTENER_POLL_INTERVAL_MS: Duration = Duration::from_millis(250
 pub(crate) const WEBSOCKET_BUFFER_LEN: usize = 4096;
 pub(crate) const WEBSOCKET_PAYLOAD_LEN: usize = 4080;
 
-
-struct Poll<R: rand::RngCore> {
+pub(crate) struct Poll<'a, R: rand::RngCore, T: Read + Write> {
     /** the configuration of an open websocket */
     socket: WebSocketClient<R>,
     /** a websocket stream when opened on a tls connection */
-    wss_stream: Option<WsStream<StreamOwned<ClientConnection, TcpStream>>>,
+    wss_stream: Option<WsStream<T>>,
     /** a websocket stream when opened on a tcp connection */
-    ws_stream: Option<WsStream<TcpStream>>,
+    ws_stream: Option<WsStream<T>>,
     /** the underlying tcp stream */
     tcp_stream: TcpStream,
     /** the callback_id to use when relaying an inbound websocket frame */
@@ -53,33 +48,34 @@ struct Poll<R: rand::RngCore> {
     /** the opcode to use when relaying an inbound websocket frame */
     opcode: u32,
     /** **/
-    framer: Framer<rand::rngs::ThreadRng, embedded_websocket::Client>;
+    framer: Framer<'a, rand::rngs::ThreadRng, embedded_websocket::Client>,
 }
 
-impl<R: rand::RngCore> Poll<R> {
+impl<R: rand::RngCore, T: Read + Write> Poll<R, T> {
     pub(crate) fn new(
         cid: CID,
         opcode: u32,
-        tcpStream: &mut TcpStream,
-        ws_stream: &mut Option<WsStream>,
-        wss_stream: &mut Option<WsStream>,
+        tcp_stream: TcpStream,
+        ws_stream: Option<WsStream<T>>,
+        wss_stream: Option<WsStream<T>>,
         socket: WebSocketClient<R>,
-    ) {
-        self.cid = cid;
-        self.opcode = opcode;
-        self.wss_stream = wss_stream;
-        self.ws_stream = ws_stream;
-        self.tcp_stream = tcp_stream;
-        self.socket = socket;
-
+    ) -> Self {
         let mut read_buf = [0; WEBSOCKET_BUFFER_LEN];
         let mut read_cursor = 0;
         let mut write_buf = [0; WEBSOCKET_BUFFER_LEN];
 
-        self.framer = Framer::new(&mut read_buf, &mut read_cursor, &mut write_buf, &mut socket);
+        Poll {
+            socket: socket,
+            wss_stream: wss_stream,
+            ws_stream: ws_stream,
+            tcp_stream: tcp_stream,
+            cid: cid,
+            opcode: opcode,
+            framer: Framer::new(&mut read_buf, &mut read_cursor, &mut write_buf, &mut socket),
+        }
     }
 
-    pub fn main() {
+    pub fn main(&self) {
         let tt = ticktimer_server::Ticktimer::new().unwrap();
 
         loop {
@@ -88,19 +84,19 @@ impl<R: rand::RngCore> Poll<R> {
 
             log::trace!("Websocket Poll");
 
-            if framer.state() != WebSocketState::Open {
+            if self.framer.state() != WebSocketState::Open {
                 break;
             }
 
-            if self.empty(&mut tcp_stream) {
+            if self.empty(&mut self.tcp_stream) {
                 continue;
             }
 
             log::trace!("Websocket Read");
-            match wss_stream {
-                Some(stream) => read(&mut framer, &mut *stream, cid, opcode),
-                None => match ws_stream {
-                    Some(stream) => read(&mut framer, &mut *stream, cid, opcode),
+            match self.wss_stream {
+                Some(stream) => self.read(&mut stream),
+                None => match self.ws_stream {
+                    Some(stream) => self.read(&mut stream),
                     None => {
                         log::warn!("Assets missing both wss_stream and ws_stream");
                         xous::return_scalar(msg.sender, WsError::AssetsFault as usize).ok();
@@ -112,7 +108,7 @@ impl<R: rand::RngCore> Poll<R> {
         }
     }
 
-    fn empty(stream: &mut TcpStream) -> bool {
+    fn empty(&self, stream: &mut TcpStream) -> bool {
         stream
             .set_nonblocking(true)
             .expect("failed to set TCP Stream to non-blocking");
@@ -132,15 +128,10 @@ impl<R: rand::RngCore> Poll<R> {
     }
 
     /** read all available frames from the websocket and relay each frame to the caller_id */
-    fn read<E, R, S, T>(framer: &mut Framer<R, S>, stream: &mut T, cid: CID, opcode: u32)
-    where
-        E: std::fmt::Debug,
-        R: rand::RngCore,
-        T: ws::framer::Stream<E>,
-        S: ws::WebSocketType,
-    {
+    fn read(&self, stream: &mut WsStream<T>) {
         let mut frame_buf = [0u8; WEBSOCKET_PAYLOAD_LEN];
-        while let Some(frame) = framer
+        while let Some(frame) = self
+            .framer
             .read_binary(&mut *stream, &mut frame_buf[..])
             .expect("failed to read websocket")
         {
@@ -149,7 +140,7 @@ impl<R: rand::RngCore> Poll<R> {
                 .expect("websocket frame too large for buffer");
             let buf = Buffer::into_buf(Frame { bytes: frame })
                 .expect("failed to serialize websocket frame into buffer");
-            buf.send(cid, opcode)
+            buf.send(self.cid, self.opcode)
                 .expect("failed to relay websocket frame");
         }
     }

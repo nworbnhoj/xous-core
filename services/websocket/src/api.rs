@@ -1,10 +1,12 @@
+use derive_deref::*;
 /// The websocket service can open, maintain and close a websocket connection.
 /// The service can also send data and regularly polls the connection for inbound
 /// data to forward to the CID provided when the websocket was opened.
+use std::io::{Error, Read, Write};
+use embedded_websocket as ws;
 
 #[allow(dead_code)]
 pub const SERVER_NAME_WEBSOCKET: &str = "_Websocket Service_";
-
 
 /** limit on the byte length of url strings */
 pub(crate) const URL_LENGTH_LIMIT: usize = 200;
@@ -21,8 +23,6 @@ pub(crate) const PASSWORD_LEN: usize = 128;
 /** limit on the byte length of websocket sub-protocol strings */
 pub const SUB_PROTOCOL_LEN: usize = 24;
 pub(crate) const HINT_LEN: usize = 128;
-
-
 
 /// These opcodes can be called by anyone at any time
 #[derive(num_derive::FromPrimitive, num_derive::ToPrimitive, Debug)]
@@ -83,27 +83,28 @@ pub enum Return {
 // a structure for defining the setup of a Websocket.
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug)]
 pub struct WebsocketConfig {
-    /** optional ca for a TLS connection - fallback to tcp */
-    pub certificate_authority: Option<xous_ipc::String<CA_LEN>>,
-    /** the url of the target websocket server */
-    pub base_url: xous_ipc::String<BASEURL_LEN>,
-    /** a path to apend to the url */
-    pub path: xous_ipc::String<PATH_LEN>,
-    /** true to authenticate */
-    pub sub_protocols: [xous_ipc::String<SUB_PROTOCOL_LEN>; 3],
-    pub use_credentials: bool,
-    /** authentication username */
-    pub login: xous_ipc::String<LOGIN_LEN>,
-    /** authentication password */
-    pub password: xous_ipc::String<PASSWORD_LEN>,
     /** the callback id for inbound data frames */
     pub cid: u32,
     /** the opcode for inbound data frames */
     pub opcode: u32,
+    /** the url of the target websocket server */
+    pub host: xous_ipc::String<BASEURL_LEN>,
+    /** the port on the target websocket server */
+    pub port: Option<xous_ipc::String<BASEURL_LEN>>,
+    /** a path to apend to the url */
+    pub path: Option<xous_ipc::String<PATH_LEN>>,
+    /** authentication username */
+    pub login: Option<xous_ipc::String<LOGIN_LEN>>,
+    /** authentication password */
+    pub password: Option<xous_ipc::String<PASSWORD_LEN>>,
+    /** optional ca for a TLS connection - fallback to tcp */
+    pub certificate_authority: Option<xous_ipc::String<CA_LEN>>,
+    /** websocket sub-protocols max 3*/
+    pub sub_protocols: [Option<xous_ipc::String<SUB_PROTOCOL_LEN>>; 3],
 }
 
 #[derive(Clone, Copy, Debug, Deref, DerefMut)]
-pub(crate) struct WsStream<T: Read + Write>(T);
+pub(crate) struct WsStream<T: Read + Write>(pub(crate) T);
 
 impl<T: Read + Write> ws::framer::Stream<Error> for WsStream<T> {
     fn read(&mut self, buf: &mut [u8]) -> std::result::Result<usize, Error> {
@@ -115,8 +116,11 @@ impl<T: Read + Write> ws::framer::Stream<Error> for WsStream<T> {
     }
 }
 
-
-pub(crate) fn validate_msg(env: &mut xous::MessageEnvelope, expected: WsError, opcode: Opcode) -> bool {
+pub(crate) fn validate_msg(
+    env: &mut xous::MessageEnvelope,
+    expected: WsError,
+    opcode: u32,
+) -> bool {
     let is_blocking = env.body.is_blocking();
     match env.body.memory_message_mut() {
         None => {
@@ -156,7 +160,7 @@ pub(crate) fn validate_msg(env: &mut xous::MessageEnvelope, expected: WsError, o
 }
 
 /** helper function to return hints from opcode panics */
-pub(crate) fn drop(hint: &str) -> api::Return {
+pub(crate) fn drop(hint: &str) -> Return {
     log::warn!("{}", hint);
-    api::Return::Failure(xous_ipc::String::from_str(hint))
+    Return::Failure(xous_ipc::String::from_str(hint))
 }

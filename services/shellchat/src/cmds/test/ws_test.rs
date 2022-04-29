@@ -82,19 +82,15 @@ fn test_app(certificate_authority: Option<xous_ipc::String<CA_LEN>>) {
         .request_connection_blocking(SERVER_NAME_WEBSOCKET)
         .expect("Cannot connect to websocket server");
     let config = WebsocketConfig {
-        certificate_authority: certificate_authority,
-        base_url: xous_ipc::String::from_str("http://127.0.0.1:1337"),
-        path: xous_ipc::String::from_str("/test"),
-        use_credentials: false,
-        sub_protocols: [
-            xous_ipc::String::from_str(PROTOCOL),
-            xous_ipc::String::new(),
-            xous_ipc::String::new(),
-        ],
-        login: xous_ipc::String::from_str(""),
-        password: xous_ipc::String::from_str(""),
         cid: cid,
         opcode: TestOpcode::Receive.to_u32().unwrap(),
+        host: xous_ipc::String::from_str("http://127.0.0.1:1337"),
+        port: None,
+        path: Some(xous_ipc::String::from_str("/test")),
+        login: Some(xous_ipc::String::from_str("")),
+        password: Some(xous_ipc::String::from_str("")),
+        certificate_authority: certificate_authority,
+        sub_protocols: [Some(xous_ipc::String::from_str(PROTOCOL)), None, None],
     };
     log::info!("Opening websocket with {:#?}", config);
 
