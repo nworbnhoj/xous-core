@@ -1,9 +1,9 @@
 use derive_deref::*;
+use embedded_websocket as ws;
 /// The websocket service can open, maintain and close a websocket connection.
 /// The service can also send data and regularly polls the connection for inbound
 /// data to forward to the CID provided when the websocket was opened.
 use std::io::{Error, Read, Write};
-use embedded_websocket as ws;
 
 #[allow(dead_code)]
 pub const SERVER_NAME_WEBSOCKET: &str = "_Websocket Service_";
@@ -76,7 +76,7 @@ pub(crate) enum WsError {
 
 #[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub enum Return {
-    SubProtocol(xous_ipc::String<SUB_PROTOCOL_LEN>),
+    SubProtocol(Option<xous_ipc::String<SUB_PROTOCOL_LEN>>),
     Failure(xous_ipc::String<HINT_LEN>),
 }
 

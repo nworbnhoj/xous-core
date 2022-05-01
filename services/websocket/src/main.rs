@@ -5,12 +5,11 @@ mod api;
 mod manager;
 mod poll;
 
-use api::{validate_msg, Opcode, WebsocketConfig, WsError, Return};
-use manager::Client;
+use api::{validate_msg, Opcode, Return, WebsocketConfig, WsError};
+
+use manager::Opcode as ClientOp;
 use num_traits::{FromPrimitive, ToPrimitive};
-use embedded_websocket as ws;
-use ws::WebSocketSendMessageType as MessageType;
-use ws::{WebSocketClient, WebSocketOptions, WebSocketState};
+
 use xous_ipc::Buffer;
 
 use std::thread;
@@ -47,7 +46,7 @@ fn xmain() -> ! {
                     continue;
                 }
                 let response = msg
-                    .forward(ws_manager_cid, Client::Opcode::Close as _)
+                    .forward(ws_manager_cid, ClientOp::Close as _)
                     .expect("failed to forward Opcode::Close");
                 log::info!("Websocket Opcode::Close complete");
                 response
@@ -65,11 +64,11 @@ fn xmain() -> ! {
                 let mut buf = unsafe {
                     Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap())
                 };
-                
+
                 let response = msg
-                    .forward(ws_manager_cid, Client::Opcode::Open as _)
+                    .forward(ws_manager_cid, ClientOp::Open as _)
                     .expect("failed to forward Opcode::Open");
-                
+
                 buf.replace(response).expect("failed replace buffer");
                 log::info!("Websocket Opcode::Open complete");
             }
@@ -79,7 +78,7 @@ fn xmain() -> ! {
                 }
                 log::info!("Websocket Opcode::Send");
                 let response = msg
-                    .forward(ws_manager_cid, Client::Opcode::Send as _)
+                    .forward(ws_manager_cid, ClientOp::Send as _)
                     .expect("failed to forward Opcode::Send");
 
                 log::info!("Websocket Opcode::Send complete");
@@ -95,7 +94,7 @@ fn xmain() -> ! {
                     continue;
                 }
                 let response = msg
-                    .forward(ws_manager_cid, Client::Opcode::State as _)
+                    .forward(ws_manager_cid, ClientOp::State as _)
                     .expect("failed to forward Opcode::State");
                 log::info!("Websocket Opcode::State complete");
                 response
@@ -106,7 +105,7 @@ fn xmain() -> ! {
                 if !validate_msg(&mut msg, WsError::Scalar, Opcode::Quit.to_u32().unwrap()) {
                     continue;
                 }
-                msg.forward(ws_manager_cid, Client::Opcode::Quit as _)
+                msg.forward(ws_manager_cid, ClientOp::Quit as _)
                     .expect("failed to forward Opcode::Quit");
                 log::info!("Websocket Opcode::State complete");
                 break;

@@ -34,9 +34,9 @@ pub(crate) const LISTENER_POLL_INTERVAL_MS: Duration = Duration::from_millis(250
 pub(crate) const WEBSOCKET_BUFFER_LEN: usize = 4096;
 pub(crate) const WEBSOCKET_PAYLOAD_LEN: usize = 4080;
 
-pub(crate) struct Poll<'a, R: rand::RngCore, T: Read + Write> {
+pub(crate) struct Poll<'a, T: Read + Write> {
     /** the configuration of an open websocket */
-    socket: WebSocketClient<R>,
+    socket: WebSocketClient<ThreadRng>,
     /** a websocket stream when opened on a tls connection */
     wss_stream: Option<WsStream<T>>,
     /** a websocket stream when opened on a tcp connection */
@@ -51,14 +51,14 @@ pub(crate) struct Poll<'a, R: rand::RngCore, T: Read + Write> {
     framer: Framer<'a, rand::rngs::ThreadRng, embedded_websocket::Client>,
 }
 
-impl<R: rand::RngCore, T: Read + Write> Poll<R, T> {
+impl<'a, T: Read + Write> Poll<'a, T> {
     pub(crate) fn new(
         cid: CID,
         opcode: u32,
         tcp_stream: TcpStream,
         ws_stream: Option<WsStream<T>>,
         wss_stream: Option<WsStream<T>>,
-        socket: WebSocketClient<R>,
+        socket: WebSocketClient<ThreadRng>,
     ) -> Self {
         let mut read_buf = [0; WEBSOCKET_BUFFER_LEN];
         let mut read_cursor = 0;
@@ -99,8 +99,7 @@ impl<R: rand::RngCore, T: Read + Write> Poll<R, T> {
                     Some(stream) => self.read(&mut stream),
                     None => {
                         log::warn!("Assets missing both wss_stream and ws_stream");
-                        xous::return_scalar(msg.sender, WsError::AssetsFault as usize).ok();
-                        continue;
+                        break;
                     }
                 },
             };

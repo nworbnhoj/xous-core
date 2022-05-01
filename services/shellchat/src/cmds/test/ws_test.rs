@@ -103,9 +103,16 @@ fn test_app(certificate_authority: Option<xous_ipc::String<CA_LEN>>) {
         .expect("request to open websocket failed");
 
     match buf.to_original::<Return, _>().unwrap() {
-        Return::SubProtocol(protocol) => match protocol.to_str() {
-            "echo" => log::info!("Opened WebSocket with protocol: {:?}", protocol.to_str()),
-            _ => log::info!("FAIL: protocol != echo (bug https://github.com/ninjasource/embedded-websocket/pull/10)"),
+        Return::SubProtocol(protocol) => match protocol {
+            Some(text) => {
+                match text.to_str() {
+                    "echo" => log::info!("Opened WebSocket with protocol echo"),
+                    _ => log::info!("FAIL: protocol != echo : {:?}", text.to_str()),
+                };
+            }
+            None => log::info!(
+                "FAIL: protocol missing https://github.com/ninjasource/embedded-websocket/pull/10)"
+            ),
         },
         Return::Failure(hint) => log::info!("FAIL: on retrieve protocol: {:?}", hint),
     };

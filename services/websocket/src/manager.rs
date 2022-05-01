@@ -8,8 +8,11 @@ use crate::poll::*;
 use embedded_websocket as ws;
 use num_traits::{FromPrimitive, ToPrimitive};
 use rand::rngs::ThreadRng;
+use rand_core::RngCore;
+//use rand::Rng;
 use rustls::{ClientConnection, StreamOwned};
 use rustls_connector::*;
+use std::io::{Error, ErrorKind};
 use std::num::NonZeroU8;
 use std::{collections::HashMap, convert::TryInto, net::TcpStream, thread};
 use ws::framer::{Framer, FramerError};
@@ -21,7 +24,6 @@ use xous_ipc::Buffer;
 
 use url::Url;
 
-use std::io::{Read, Write};
 use std::time::Duration;
 
 /** time between reglar websocket keep-alive requests */
@@ -66,9 +68,9 @@ pub enum Opcode {
     Quit,
 }
 
-pub(crate) struct Client<R: rand::RngCore> {
+pub(crate) struct Client {
     /** the configuration of an open websocket */
-    socket: WebSocketClient<R>,
+    socket: WebSocketClient<ThreadRng>,
     /** a websocket stream when opened on a tls connection */
     wss_stream: Option<WsStream<StreamOwned<ClientConnection, TcpStream>>>,
     /** a websocket stream when opened on a tcp connection */
@@ -85,28 +87,30 @@ pub(crate) struct Client<R: rand::RngCore> {
     cid: CID,
     /** the opcode to use when relaying an inbound websocket frame */
     opcode: u32,
+    /** **/
+    sub_protocol: Option<xous_ipc::String<SUB_PROTOCOL_LEN>>,
 }
 
-impl<'a, R: rand::RngCore> Client<R> {
-    pub(crate) fn new(ws_config: WebsocketConfig) -> Self {
+impl Client {
+    pub(crate) fn new(ws_config: WebsocketConfig, cid: CID, opcode: u32) -> Result<Self, Error> {
         // construct url from ws_config
         let host = ws_config.host.as_str().expect("url utf-8 decode fail");
         let mut url = Url::parse(host).expect("invalid host");
         let path = match ws_config.path {
             Some(path) => {
-                let path = path.unwrap().as_str().expect("path utf-8 decode error");
+                let path = path.as_str().expect("path utf-8 decode error");
                 url = url.join(path).expect("valid path");
+                path
             }
             None => "",
         };
         if ws_config.port.is_some() {
-            url.set_port(
-                ws_config
-                    .port
-                    .unwrap()
-                    .try_into()
-                    .expect("login utf-8 decode error"),
-            );
+            match ws_config.port.unwrap().to_string().parse() {
+                Ok(int) => url.set_port(Some(int)).unwrap(),
+                Err(e) => {
+                    log::warn!("failed to parse websocket port");
+                }
+            }
         }
         if ws_config.login.is_some() {
             let login = ws_config
@@ -133,7 +137,10 @@ impl<'a, R: rand::RngCore> Client<R> {
         log::info!("Opening TCP connection to {:?}", host);
         let tcp_stream = match TcpStream::connect(url.as_str()) {
             Ok(tcp_stream) => tcp_stream,
-            Err(e) => log::warn!("Failed to open TCP Stream {:?}", e),
+            Err(e) => {
+                log::warn!("Failed to open TCP Stream {:?}", e);
+                return Err(Error::from(ErrorKind::ConnectionRefused));
+            }
         };
 
         log::info!("TCP connected to {:?}", host);
@@ -141,18 +148,23 @@ impl<'a, R: rand::RngCore> Client<R> {
         let mut read_buf = [0u8; WEBSOCKET_BUFFER_LEN];
         let mut read_cursor = 0;
         let mut write_buf = [0u8; WEBSOCKET_BUFFER_LEN];
-        let mut socket = WebSocketClient::new_client(rand::thread_rng());
-        let mut framer = Framer::new(&mut read_buf, &mut read_cursor, &mut write_buf, &mut socket);
+        let mut ws_client = WebSocketClient::new_client(rand::thread_rng());
+        let mut framer = Framer::new(
+            &mut read_buf,
+            &mut read_cursor,
+            &mut write_buf,
+            &mut ws_client,
+        );
 
         let websocket_options = WebSocketOptions {
             path: path,
             host: host,
             origin: &url.origin().unicode_serialization(),
-            sub_protocols: [
-                ws_config.sub_protocols[0].as_str().unwrap(),
-                ws_config.sub_protocols[1].as_str().unwrap(),
-                ws_config.sub_protocols[2].as_str().unwrap(),
-            ],
+            sub_protocols: Some(&[
+                ws_config.sub_protocols[0].unwrap().as_str().unwrap(),
+                ws_config.sub_protocols[1].unwrap().as_str().unwrap(),
+                ws_config.sub_protocols[2].unwrap().as_str().unwrap(),
+            ]),
             additional_headers: None,
         };
 
@@ -160,18 +172,25 @@ impl<'a, R: rand::RngCore> Client<R> {
         let wss_stream = None;
         let tcp_clone = match tcp_stream.try_clone() {
             Ok(c) => c,
-            Err(e) => log::warn!("Failed to clone TCP Stream {:?}", e),
+            Err(e) => {
+                log::warn!("Failed to clone TCP Stream {:?}", e);
+                return Err(Error::from(ErrorKind::ConnectionRefused));
+            }
         };
-        let sub_protocol: xous_ipc::String<{ SUB_PROTOCOL_LEN }>;
+        // let sub_protocol: xous_ipc::String<{ SUB_PROTOCOL_LEN }>;
+        let sub_protocol;
         if ws_config.certificate_authority.is_none() {
             // Initiate a websocket opening handshake over the TCP Stream
             let stream = WsStream(tcp_stream);
             sub_protocol = match framer.connect(&mut stream, &websocket_options) {
                 Ok(opt) => match opt {
-                    Some(sp) => xous_ipc::String::from_str(sp.to_string()),
-                    None => xous_ipc::String::from_str(""),
+                    Some(sp) => Some(xous_ipc::String::from_str(sp.to_string())),
+                    None => None,
                 },
-                Err(e) => log::warn!("Unable to connect WebSocket {:?}", e),
+                Err(e) => {
+                    log::warn!("Unable to connect WebSocket {:?}", e);
+                    return Err(Error::from(ErrorKind::ConnectionRefused));
+                }
             };
             ws_stream = Some(stream);
         } else {
@@ -203,46 +222,50 @@ impl<'a, R: rand::RngCore> Client<R> {
                     log::info!("TLS connected to {:?}", url.host_str().unwrap());
                     tls_stream
                 }
-                Err(e) => log::warn!("Failed to complete TLS handshake {:?}", e),
+                Err(e) => {
+                    log::warn!("Failed to complete TLS handshake {:?}", e);
+                    return Err(Error::from(ErrorKind::ConnectionRefused));
+                }
             };
             // Initiate a websocket opening handshake over the TLS Stream
             let stream = WsStream(tls_stream);
             sub_protocol = match framer.connect(&mut stream, &websocket_options) {
                 Ok(opt) => match opt {
-                    Some(sp) => xous_ipc::String::from_str(sp.to_string()),
-                    None => xous_ipc::String::from_str(""),
+                    Some(sp) => Some(xous_ipc::String::from_str(sp.to_string())),
+                    None => None,
                 },
-                Err(e) => log::warn!("Unable to connect WebSocket {:?}", e),
+                Err(e) => {
+                    log::warn!("Unable to connect WebSocket {:?}", e);
+                    return Err(Error::from(ErrorKind::ConnectionRefused));
+                }
             };
             wss_stream = Some(stream);
         }
         log::info!("WebSocket connected with protocol: {:?}", sub_protocol);
 
-        Client {
-            socket,
+        Ok(Client {
+            socket: ws_client,
             wss_stream,
             ws_stream,
-            tcp_clone,
+            tcp_stream: tcp_clone,
             read_buf,
             read_cursor,
             write_buf,
-        }
+            cid,
+            opcode,
+            sub_protocol,
+        })
     }
 
     pub(crate) fn Ok(&self) -> bool {
-        self.framer.status() == WebSocketState::Open;
+        self.framer.status() == WebSocketState::Open
     }
 
-    pub(crate) fn sub_protocol(&self) -> Option<&str> {
-        //let mut response = api::Return::SubProtocol(sub_protocol);
-        self.sub_protocol
-    }
-
-    fn spawn_poll(&self, cid: CID) {
+    pub(crate) fn spawn_poll(&self) {
         let mut poll = Poll::new(
             self.cid,
             self.opcode,
-            self.tcp_clone,
+            self.tcp_stream,
             self.ws_stream,
             self.wss_stream,
             self.socket,
@@ -250,12 +273,12 @@ impl<'a, R: rand::RngCore> Client<R> {
 
         thread::spawn({
             move || {
-                poll.main(cid);
+                poll.main();
             }
         });
     }
 
-    fn write<E, T: Read + Write>(&self, buffer: &[u8]) -> Result<(), FramerError<E>> {
+    fn write(&self, buffer: &[u8]) -> Result<(), Error> {
         let mut ret = Ok(());
 
         let mut framer = Framer::new(
@@ -270,39 +293,40 @@ impl<'a, R: rand::RngCore> Client<R> {
             None => match self.ws_stream {
                 Some(stream) => stream,
                 None => {
-                    log::warn!("Assets missing both wss_stream and ws_stream");
-                    return Err();
+                    return Err(Error::new(
+                        ErrorKind::Other,
+                        "Assets missing both wss_stream and ws_stream",
+                    ));
                 }
             },
         };
 
-        match framer.state() {
-            WebSocketState::Open => {
-                let mut end_of_message = false;
-                let mut start = 0;
-                let mut slice;
-                while !end_of_message {
-                    log::info!("start = {:?}", start);
-                    if buffer.len() < (start + WEBSOCKET_PAYLOAD_LEN) {
-                        end_of_message = true;
-                        slice = &buffer[start..];
-                    } else {
-                        slice = &buffer[start..(start + WEBSOCKET_PAYLOAD_LEN)];
-                    }
-                    ret = framer.write(&mut *stream, MessageType::Binary, end_of_message, slice);
-                    start = start + WEBSOCKET_PAYLOAD_LEN;
+        let mut end_of_message = false;
+        let mut start = 0;
+        let mut slice;
+        while !end_of_message {
+            log::info!("start = {:?}", start);
+            if buffer.len() < (start + WEBSOCKET_PAYLOAD_LEN) {
+                end_of_message = true;
+                slice = &buffer[start..];
+            } else {
+                slice = &buffer[start..(start + WEBSOCKET_PAYLOAD_LEN)];
+            }
+            let ret = match framer.write(&mut *stream, MessageType::Binary, end_of_message, slice) {
+                Ok(ret) => Ok(ret),
+                Err(e) => {
+                    return Err(Error::new(
+                        ErrorKind::BrokenPipe,
+                        "Failed to write websocket frame",
+                    ))
                 }
-                ret
-            }
-            _ => {
-                let hint = format!("WebSocket DOA {:?}", framer.state());
-                buf.replace(drop(&hint)).expect("failed replace buffer");
-                Err()
-            }
+            };
+            start = start + WEBSOCKET_PAYLOAD_LEN;
         }
+        ret
     }
 
-    fn close(&self) -> Result<(), FramerError<E>> {
+    fn close(&self) -> Result<(), Error> {
         let mut ret = Ok(());
 
         let mut framer = Framer::new(
@@ -317,13 +341,21 @@ impl<'a, R: rand::RngCore> Client<R> {
             None => match self.ws_stream {
                 Some(stream) => stream,
                 None => {
-                    log::warn!("Assets missing both wss_stream and ws_stream");
-                    return Err();
+                    return Err(Error::new(
+                        ErrorKind::Other,
+                        "Assets missing both wss_stream and ws_stream",
+                    ))
                 }
             },
         };
 
-        framer.close(&mut *stream, StatusCode::NormalClosure, None)
+        match framer.close(&mut *stream, StatusCode::NormalClosure, None) {
+            Ok(ret) => Ok(ret),
+            Err(e) => {
+                log::warn!("Failed to close WebSocket {:?}", e);
+                return Err(Error::from(ErrorKind::Other));
+            }
+        }
     }
 }
 
@@ -340,7 +372,7 @@ pub(crate) fn main(sid: SID) -> ! {
 
     /* holds the assets of existing websockets by pid - and as such - limits each pid to 1 websocket. */
     // TODO review the limitation of 1 websocket per pid.
-    let mut clients: HashMap<NonZeroU8, Client<ThreadRng>> = HashMap::new();
+    let mut clients: HashMap<NonZeroU8, Client> = HashMap::new();
 
     log::trace!("ready to accept requests");
     loop {
@@ -380,9 +412,19 @@ pub(crate) fn main(sid: SID) -> ! {
                     Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap())
                 };
                 let ws_config = buf.to_original::<WebsocketConfig, _>().unwrap();
-                let ws_client = Client::new(ws_config);
-                clients.insert(pid, ws_client);
-                ws_client.spawn_poll(cid);
+
+                match Client::new(ws_config, ws_config.cid, ws_config.opcode) {
+                    Ok(client) => {
+                        clients.insert(pid, client);
+                        client.spawn_poll();
+                        buf.replace(Return::SubProtocol(client.protocol))
+                            .expect("failed replace buffer");
+                    }
+                    Err(e) => {
+                        let hint = format!("failed to open Websocket {:?}", e);
+                        buf.replace(drop(&hint)).expect("failed replace buffer");
+                    }
+                }
             }
             Some(Opcode::Send) => {
                 if !validate_msg(&mut msg, WsError::Memory, Opcode::Send.to_u32().unwrap()) {
