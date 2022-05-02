@@ -7,15 +7,13 @@ use crate::poll::*;
 
 use embedded_websocket as ws;
 use num_traits::{FromPrimitive, ToPrimitive};
-use rand::rngs::ThreadRng;
-use rand_core::RngCore;
-//use rand::Rng;
-use rustls::{ClientConnection, StreamOwned};
+use rand::rngs::OsRng;
+
 use rustls_connector::*;
 use std::io::{Error, ErrorKind};
 use std::num::NonZeroU8;
 use std::{collections::HashMap, convert::TryInto, net::TcpStream, thread};
-use ws::framer::{Framer, FramerError};
+use ws::framer::Framer;
 use ws::WebSocketCloseStatusCode as StatusCode;
 use ws::WebSocketSendMessageType as MessageType;
 use ws::{WebSocketClient, WebSocketOptions, WebSocketState};
@@ -70,11 +68,9 @@ pub enum Opcode {
 
 pub(crate) struct Client {
     /** the configuration of an open websocket */
-    socket: WebSocketClient<ThreadRng>,
-    /** a websocket stream when opened on a tls connection */
-    wss_stream: Option<WsStream<StreamOwned<ClientConnection, TcpStream>>>,
+    socket: WebSocketClient<OsRng>,
     /** a websocket stream when opened on a tcp connection */
-    ws_stream: Option<WsStream<TcpStream>>,
+    ws_stream: WsStream,
     /** the underlying tcp stream */
     tcp_stream: TcpStream,
     /** the framer read buffer */
@@ -142,13 +138,45 @@ impl Client {
                 return Err(Error::from(ErrorKind::ConnectionRefused));
             }
         };
-
         log::info!("TCP connected to {:?}", host);
 
+        let ws_stream = match ws_config.certificate_authority {
+            None => WsStream::Tcp(tcp_stream),
+            Some(ca) => {
+                // Create a TLS connection to the remote Server on the TCP Stream
+                let ca = ca
+                    .as_str()
+                    .expect("certificate_authority utf-8 decode error");
+
+                // setup the ssl certificate
+                let mut cert_bytes = std::io::Cursor::new(ca);
+                let roots = rustls_pemfile::certs(&mut cert_bytes).expect("parseable PEM files");
+                let roots = roots.iter().map(|v| rustls::Certificate(v.clone()));
+
+                let mut root_certs = rustls::RootCertStore::empty();
+                for root in roots {
+                    root_certs.add(&root).unwrap();
+                }
+
+                let ssl_config = rustls::ClientConfig::builder()
+                    .with_safe_defaults()
+                    .with_root_certificates(root_certs)
+                    .with_no_client_auth();
+
+                let tls_connector = RustlsConnector::from(ssl_config);
+                let tls_stream = tls_connector
+                    .connect(url.host_str().unwrap(), tcp_stream)
+                    .expect("Failed to complete TLS handshake");
+                log::info!("TLS connected to {:?}", url.host_str().unwrap());
+                WsStream::Tls(tls_stream)
+            }
+        };
+
+        // Prepare for a websocket connection
         let mut read_buf = [0u8; WEBSOCKET_BUFFER_LEN];
         let mut read_cursor = 0;
         let mut write_buf = [0u8; WEBSOCKET_BUFFER_LEN];
-        let mut ws_client = WebSocketClient::new_client(rand::thread_rng());
+        let mut ws_client = WebSocketClient::new_client(OsRng);
         let mut framer = Framer::new(
             &mut read_buf,
             &mut read_cursor,
@@ -168,86 +196,24 @@ impl Client {
             additional_headers: None,
         };
 
-        let ws_stream = None;
-        let wss_stream = None;
-        let tcp_clone = match tcp_stream.try_clone() {
-            Ok(c) => c,
+        // Initiate a websocket opening handshake over the TLS Stream
+        let sub_protocol = match framer.connect(&mut ws_stream, &websocket_options) {
+            Ok(opt) => match opt {
+                Some(sp) => Some(xous_ipc::String::from_str(sp.to_string())),
+                None => None,
+            },
             Err(e) => {
-                log::warn!("Failed to clone TCP Stream {:?}", e);
+                log::warn!("Unable to connect WebSocket {:?}", e);
                 return Err(Error::from(ErrorKind::ConnectionRefused));
             }
         };
-        // let sub_protocol: xous_ipc::String<{ SUB_PROTOCOL_LEN }>;
-        let sub_protocol;
-        if ws_config.certificate_authority.is_none() {
-            // Initiate a websocket opening handshake over the TCP Stream
-            let stream = WsStream(tcp_stream);
-            sub_protocol = match framer.connect(&mut stream, &websocket_options) {
-                Ok(opt) => match opt {
-                    Some(sp) => Some(xous_ipc::String::from_str(sp.to_string())),
-                    None => None,
-                },
-                Err(e) => {
-                    log::warn!("Unable to connect WebSocket {:?}", e);
-                    return Err(Error::from(ErrorKind::ConnectionRefused));
-                }
-            };
-            ws_stream = Some(stream);
-        } else {
-            // Create a TLS connection to the remote Server on the TCP Stream
-            let ca = ws_config
-                .certificate_authority
-                .unwrap()
-                .as_str()
-                .expect("certificate_authority utf-8 decode error");
 
-            // setup the ssl certificate
-            let mut cert_bytes = std::io::Cursor::new(ca);
-            let roots = rustls_pemfile::certs(&mut cert_bytes).expect("parseable PEM files");
-            let roots = roots.iter().map(|v| rustls::Certificate(v.clone()));
-
-            let mut root_certs = rustls::RootCertStore::empty();
-            for root in roots {
-                root_certs.add(&root).unwrap();
-            }
-
-            let ssl_config = rustls::ClientConfig::builder()
-                .with_safe_defaults()
-                .with_root_certificates(root_certs)
-                .with_no_client_auth();
-
-            let tls_connector = RustlsConnector::from(ssl_config);
-            let tls_stream = match tls_connector.connect(url.host_str().unwrap(), tcp_stream) {
-                Ok(tls_stream) => {
-                    log::info!("TLS connected to {:?}", url.host_str().unwrap());
-                    tls_stream
-                }
-                Err(e) => {
-                    log::warn!("Failed to complete TLS handshake {:?}", e);
-                    return Err(Error::from(ErrorKind::ConnectionRefused));
-                }
-            };
-            // Initiate a websocket opening handshake over the TLS Stream
-            let stream = WsStream(tls_stream);
-            sub_protocol = match framer.connect(&mut stream, &websocket_options) {
-                Ok(opt) => match opt {
-                    Some(sp) => Some(xous_ipc::String::from_str(sp.to_string())),
-                    None => None,
-                },
-                Err(e) => {
-                    log::warn!("Unable to connect WebSocket {:?}", e);
-                    return Err(Error::from(ErrorKind::ConnectionRefused));
-                }
-            };
-            wss_stream = Some(stream);
-        }
         log::info!("WebSocket connected with protocol: {:?}", sub_protocol);
 
         Ok(Client {
             socket: ws_client,
-            wss_stream,
             ws_stream,
-            tcp_stream: tcp_clone,
+            tcp_stream: tcp_stream.try_clone().expect("Failed to clone TCP Stream"),
             read_buf,
             read_cursor,
             write_buf,
@@ -267,7 +233,6 @@ impl Client {
             self.opcode,
             self.tcp_stream,
             self.ws_stream,
-            self.wss_stream,
             self.socket,
         );
 
@@ -288,19 +253,6 @@ impl Client {
             &mut self.socket,
         );
 
-        let stream = match self.wss_stream {
-            Some(stream) => stream,
-            None => match self.ws_stream {
-                Some(stream) => stream,
-                None => {
-                    return Err(Error::new(
-                        ErrorKind::Other,
-                        "Assets missing both wss_stream and ws_stream",
-                    ));
-                }
-            },
-        };
-
         let mut end_of_message = false;
         let mut start = 0;
         let mut slice;
@@ -312,8 +264,13 @@ impl Client {
             } else {
                 slice = &buffer[start..(start + WEBSOCKET_PAYLOAD_LEN)];
             }
-            let ret = match framer.write(&mut *stream, MessageType::Binary, end_of_message, slice) {
-                Ok(ret) => Ok(ret),
+            let ret = match framer.write(
+                &mut self.ws_stream,
+                MessageType::Binary,
+                end_of_message,
+                slice,
+            ) {
+                Ok(ret) => (),
                 Err(e) => {
                     return Err(Error::new(
                         ErrorKind::BrokenPipe,
@@ -327,8 +284,6 @@ impl Client {
     }
 
     fn close(&self) -> Result<(), Error> {
-        let mut ret = Ok(());
-
         let mut framer = Framer::new(
             &mut self.read_buf[..],
             &mut self.read_cursor,
@@ -336,21 +291,8 @@ impl Client {
             &mut self.socket,
         );
 
-        let stream = match self.wss_stream {
-            Some(stream) => stream,
-            None => match self.ws_stream {
-                Some(stream) => stream,
-                None => {
-                    return Err(Error::new(
-                        ErrorKind::Other,
-                        "Assets missing both wss_stream and ws_stream",
-                    ))
-                }
-            },
-        };
-
-        match framer.close(&mut *stream, StatusCode::NormalClosure, None) {
-            Ok(ret) => Ok(ret),
+        match framer.close(&mut self.ws_stream, StatusCode::NormalClosure, None) {
+            Ok(ret) => Ok(()),
             Err(e) => {
                 log::warn!("Failed to close WebSocket {:?}", e);
                 return Err(Error::from(ErrorKind::Other));
@@ -384,7 +326,7 @@ pub(crate) fn main(sid: SID) -> ! {
                     continue;
                 }
                 let pid = msg.sender.pid().unwrap();
-                let mut framer: Framer<rand::rngs::ThreadRng, embedded_websocket::Client>;
+                let mut framer: Framer<rand::rngs::OsRng, embedded_websocket::Client>;
                 let client = match clients.get_mut(&pid) {
                     Some(client) => match client.close() {
                         Ok(()) => log::info!("Sent close handshake"),
@@ -417,7 +359,7 @@ pub(crate) fn main(sid: SID) -> ! {
                     Ok(client) => {
                         clients.insert(pid, client);
                         client.spawn_poll();
-                        buf.replace(Return::SubProtocol(client.protocol))
+                        buf.replace(Return::SubProtocol(client.sub_protocol))
                             .expect("failed replace buffer");
                     }
                     Err(e) => {
@@ -490,8 +432,8 @@ pub(crate) fn main(sid: SID) -> ! {
                     continue;
                 }
                 let pid = msg.sender.pid().unwrap();
-                let mut framer: Framer<rand::rngs::ThreadRng, embedded_websocket::Client>;
-                let (wss_stream, ws_stream) = match clients.get_mut(&pid) {
+                let mut framer: Framer<rand::rngs::OsRng, embedded_websocket::Client>;
+                let response = match clients.get_mut(&pid) {
                     Some(client) => {
                         framer = Framer::new(
                             &mut client.read_buf[..],
@@ -499,32 +441,15 @@ pub(crate) fn main(sid: SID) -> ! {
                             &mut client.write_buf[..],
                             &mut client.socket,
                         );
-                        (&mut client.wss_stream, &mut client.ws_stream)
+                        // TODO review keep alive request technique
+                        let frame_buf = "keep alive please :-)".as_bytes();
+                        framer.write(&mut client.ws_stream, MessageType::Text, true, &frame_buf)
                     }
                     None => {
                         log::warn!("Websocket assets not in list");
                         xous::return_scalar(msg.sender, WsError::AssetsFault as usize).ok();
                         continue;
                     }
-                };
-
-                // TODO review keep alive request technique
-                let frame_buf = "keep alive please :-)".as_bytes();
-
-                let response = match wss_stream {
-                    Some(stream) => framer.write(&mut *stream, MessageType::Text, true, &frame_buf),
-
-                    None => match ws_stream {
-                        Some(stream) => {
-                            framer.write(&mut *stream, MessageType::Text, true, &frame_buf)
-                        }
-
-                        None => {
-                            log::warn!("Assets missing both wss_stream and ws_stream");
-                            xous::return_scalar(msg.sender, WsError::AssetsFault as usize).ok();
-                            continue;
-                        }
-                    },
                 };
 
                 match response {

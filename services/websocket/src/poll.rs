@@ -6,14 +6,9 @@ use crate::manager::Frame;
 use api::*;
 
 use embedded_websocket as ws;
-use rand::rngs::ThreadRng;
-use rustls::{ClientConnection, StreamOwned};
-use rustls_connector::*;
-use std::{
-    convert::TryInto,
-    io::{ErrorKind, Read, Write},
-    net::TcpStream,
-};
+use rand::rngs::OsRng;
+
+use std::{convert::TryInto, io::ErrorKind, net::TcpStream};
 use ws::framer::Framer;
 use ws::{WebSocketClient, WebSocketState};
 use xous::CID;
@@ -34,13 +29,11 @@ pub(crate) const LISTENER_POLL_INTERVAL_MS: Duration = Duration::from_millis(250
 pub(crate) const WEBSOCKET_BUFFER_LEN: usize = 4096;
 pub(crate) const WEBSOCKET_PAYLOAD_LEN: usize = 4080;
 
-pub(crate) struct Poll<'a, T: Read + Write> {
+pub(crate) struct Poll<'a> {
     /** the configuration of an open websocket */
-    socket: WebSocketClient<ThreadRng>,
-    /** a websocket stream when opened on a tls connection */
-    wss_stream: Option<WsStream<T>>,
-    /** a websocket stream when opened on a tcp connection */
-    ws_stream: Option<WsStream<T>>,
+    socket: WebSocketClient<OsRng>,
+    /** a websocket stream */
+    ws_stream: WsStream,
     /** the underlying tcp stream */
     tcp_stream: TcpStream,
     /** the callback_id to use when relaying an inbound websocket frame */
@@ -48,17 +41,16 @@ pub(crate) struct Poll<'a, T: Read + Write> {
     /** the opcode to use when relaying an inbound websocket frame */
     opcode: u32,
     /** **/
-    framer: Framer<'a, rand::rngs::ThreadRng, embedded_websocket::Client>,
+    framer: Framer<'a, rand::rngs::OsRng, embedded_websocket::Client>,
 }
 
-impl<'a, T: Read + Write> Poll<'a, T> {
+impl<'a> Poll<'a> {
     pub(crate) fn new(
         cid: CID,
         opcode: u32,
         tcp_stream: TcpStream,
-        ws_stream: Option<WsStream<T>>,
-        wss_stream: Option<WsStream<T>>,
-        socket: WebSocketClient<ThreadRng>,
+        ws_stream: WsStream,
+        socket: WebSocketClient<OsRng>,
     ) -> Self {
         let mut read_buf = [0; WEBSOCKET_BUFFER_LEN];
         let mut read_cursor = 0;
@@ -66,7 +58,6 @@ impl<'a, T: Read + Write> Poll<'a, T> {
 
         Poll {
             socket: socket,
-            wss_stream: wss_stream,
             ws_stream: ws_stream,
             tcp_stream: tcp_stream,
             cid: cid,
@@ -88,31 +79,22 @@ impl<'a, T: Read + Write> Poll<'a, T> {
                 break;
             }
 
-            if self.empty(&mut self.tcp_stream) {
+            if self.empty() {
                 continue;
             }
 
             log::trace!("Websocket Read");
-            match self.wss_stream {
-                Some(stream) => self.read(&mut stream),
-                None => match self.ws_stream {
-                    Some(stream) => self.read(&mut stream),
-                    None => {
-                        log::warn!("Assets missing both wss_stream and ws_stream");
-                        break;
-                    }
-                },
-            };
+            self.read();
             log::trace!("Websocket Read complete");
         }
     }
 
-    fn empty(&self, stream: &mut TcpStream) -> bool {
-        stream
+    fn empty(&self) -> bool {
+        self.tcp_stream
             .set_nonblocking(true)
             .expect("failed to set TCP Stream to non-blocking");
         let mut frame_buf = [0u8; 8];
-        let empty = match stream.peek(&mut frame_buf) {
+        let empty = match self.tcp_stream.peek(&mut frame_buf) {
             Ok(_) => false,
             Err(ref e) if e.kind() == ErrorKind::WouldBlock => true,
             Err(e) => {
@@ -120,18 +102,18 @@ impl<'a, T: Read + Write> Poll<'a, T> {
                 true
             }
         };
-        stream
+        self.tcp_stream
             .set_nonblocking(false)
             .expect("failed to set TCP Stream to non-blocking");
         empty
     }
 
     /** read all available frames from the websocket and relay each frame to the caller_id */
-    fn read(&self, stream: &mut WsStream<T>) {
+    fn read(&self) {
         let mut frame_buf = [0u8; WEBSOCKET_PAYLOAD_LEN];
         while let Some(frame) = self
             .framer
-            .read_binary(&mut *stream, &mut frame_buf[..])
+            .read_binary(&mut self.ws_stream, &mut frame_buf[..])
             .expect("failed to read websocket")
         {
             let frame: [u8; WEBSOCKET_PAYLOAD_LEN] = frame

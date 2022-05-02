@@ -1,9 +1,10 @@
-use derive_deref::*;
-use embedded_websocket as ws;
 /// The websocket service can open, maintain and close a websocket connection.
 /// The service can also send data and regularly polls the connection for inbound
 /// data to forward to the CID provided when the websocket was opened.
-use std::io::{Error, Read, Write};
+use std::io::Error;
+use std::net::TcpStream;
+use embedded_websocket as ws;
+use rustls::{ClientConnection, StreamOwned};
 
 #[allow(dead_code)]
 pub const SERVER_NAME_WEBSOCKET: &str = "_Websocket Service_";
@@ -103,16 +104,25 @@ pub struct WebsocketConfig {
     pub sub_protocols: [Option<xous_ipc::String<SUB_PROTOCOL_LEN>>; 3],
 }
 
-#[derive(Clone, Copy, Debug, Deref, DerefMut)]
-pub(crate) struct WsStream<T: Read + Write>(pub(crate) T);
+#[derive(Debug)]
+pub(crate) enum WsStream {
+    Tcp(TcpStream),
+    Tls(StreamOwned<ClientConnection, TcpStream>),
+}
 
-impl<T: Read + Write> ws::framer::Stream<Error> for WsStream<T> {
+impl ws::framer::Stream<Error> for WsStream {
     fn read(&mut self, buf: &mut [u8]) -> std::result::Result<usize, Error> {
-        self.0.read(buf)
+        match self {
+            WsStream::Tcp(s) => std::io::Read::read(s, buf),
+            WsStream::Tls(s) => std::io::Read::read(s, buf),
+        }
     }
 
     fn write_all(&mut self, buf: &[u8]) -> std::result::Result<(), Error> {
-        self.0.write_all(buf)
+        match self {
+            WsStream::Tcp(s) => std::io::Write::write_all(s, buf),
+            WsStream::Tls(s) => std::io::Write::write_all(s, buf),
+        }
     }
 }
 
