@@ -94,11 +94,11 @@ impl Client {
         let mut url = Url::parse(host).expect("invalid host");
         let path = match ws_config.path {
             Some(path) => {
-                let path = path.as_str().expect("path utf-8 decode error");
-                url = url.join(path).expect("valid path");
-                path
+               let path = path.as_str().expect("path utf-8 decode error");
+               url = url.join(path).expect("valid path");
+               path.to_string()            
             }
-            None => "",
+            None => "".to_string(),
         };
         if ws_config.port.is_some() {
             match ws_config.port.unwrap().to_string().parse() {
@@ -108,21 +108,19 @@ impl Client {
                 }
             }
         }
-        if ws_config.login.is_some() {
-            let login = ws_config
-                .login
-                .unwrap()
-                .as_str()
-                .expect("login utf-8 decode error");
-            url.query_pairs_mut().append_pair("login", &login);
+        match ws_config.login {
+            Some(login) => {
+                let login = login.as_str().expect("login utf-8 decode error");
+                url.query_pairs_mut().append_pair("login", &login);
+                }
+            None => {}
         }
-        if ws_config.password.is_some() {
-            let password = ws_config
-                .password
-                .unwrap()
-                .as_str()
-                .expect("password utf-8 decode error");
-            url.query_pairs_mut().append_pair("password", &password);
+        match ws_config.password {
+            Some(pwd) => { 
+                let password = pwd.as_str().expect("password utf-8 decode error");
+                url.query_pairs_mut().append_pair("password", password);
+            }
+            None => {}
         }
         match ws_config.certificate_authority.is_some() {
             true => url.set_scheme("wss").expect("fail set url scheme"),
@@ -131,16 +129,17 @@ impl Client {
 
         // Create a TCP Stream between this device and the remote Server
         log::info!("Opening TCP connection to {:?}", host);
-        let tcp_stream = match TcpStream::connect(url.as_str()) {
+        let mut tcp_stream = match TcpStream::connect(url.as_str()) {
             Ok(tcp_stream) => tcp_stream,
             Err(e) => {
                 log::warn!("Failed to open TCP Stream {:?}", e);
                 return Err(Error::from(ErrorKind::ConnectionRefused));
             }
         };
+        let tcp_clone = tcp_stream.try_clone().expect("Failed to clone TCP Stream");
         log::info!("TCP connected to {:?}", host);
 
-        let ws_stream = match ws_config.certificate_authority {
+        let mut ws_stream = match ws_config.certificate_authority {
             None => WsStream::Tcp(tcp_stream),
             Some(ca) => {
                 // Create a TLS connection to the remote Server on the TCP Stream
@@ -171,7 +170,19 @@ impl Client {
                 WsStream::Tls(tls_stream)
             }
         };
-
+        
+       
+        let sub_protocol;
+        let mut sub_protocol_arr: [&str; 1] = [""];
+        let sub_protocols: Option<&[&str]> = match ws_config.sub_protocol {
+            Some(sp) => {
+                 sub_protocol = sp.as_str().expect("sub_protocol 0 utf-8 decode error").to_string();
+                 sub_protocol_arr[0] = &sub_protocol;
+                 Some(&sub_protocol_arr[..])
+            }
+            None => None,
+        };
+        
         // Prepare for a websocket connection
         let mut read_buf = [0u8; WEBSOCKET_BUFFER_LEN];
         let mut read_cursor = 0;
@@ -185,14 +196,10 @@ impl Client {
         );
 
         let websocket_options = WebSocketOptions {
-            path: path,
+            path: &path,
             host: host,
             origin: &url.origin().unicode_serialization(),
-            sub_protocols: Some(&[
-                ws_config.sub_protocols[0].unwrap().as_str().unwrap(),
-                ws_config.sub_protocols[1].unwrap().as_str().unwrap(),
-                ws_config.sub_protocols[2].unwrap().as_str().unwrap(),
-            ]),
+            sub_protocols: sub_protocols,
             additional_headers: None,
         };
 
@@ -213,7 +220,7 @@ impl Client {
         Ok(Client {
             socket: ws_client,
             ws_stream,
-            tcp_stream: tcp_stream.try_clone().expect("Failed to clone TCP Stream"),
+            tcp_stream: tcp_clone,
             read_buf,
             read_cursor,
             write_buf,
@@ -224,11 +231,13 @@ impl Client {
     }
 
     pub(crate) fn Ok(&self) -> bool {
-        self.framer.status() == WebSocketState::Open
+        //TODO fix framer status
+        //self.framer.status() == WebSocketState::Open
+        true
     }
 
     pub(crate) fn spawn_poll(&self) {
-        let mut poll = Poll::new(
+        let poll = Poll::new(
             self.cid,
             self.opcode,
             self.tcp_stream,
@@ -243,7 +252,7 @@ impl Client {
         });
     }
 
-    fn write(&self, buffer: &[u8]) -> Result<(), Error> {
+    fn write(&mut self, buffer: &[u8]) -> Result<(), Error> {
         let mut ret = Ok(());
 
         let mut framer = Framer::new(
@@ -283,7 +292,7 @@ impl Client {
         ret
     }
 
-    fn close(&self) -> Result<(), Error> {
+    fn close(&mut self) -> Result<(), Error> {
         let mut framer = Framer::new(
             &mut self.read_buf[..],
             &mut self.read_cursor,
@@ -357,9 +366,10 @@ pub(crate) fn main(sid: SID) -> ! {
 
                 match Client::new(ws_config, ws_config.cid, ws_config.opcode) {
                     Ok(client) => {
+                        let sub_protocol = client.sub_protocol;
                         clients.insert(pid, client);
                         client.spawn_poll();
-                        buf.replace(Return::SubProtocol(client.sub_protocol))
+                        buf.replace(Return::SubProtocol(sub_protocol))
                             .expect("failed replace buffer");
                     }
                     Err(e) => {

@@ -87,10 +87,10 @@ fn test_app(certificate_authority: Option<xous_ipc::String<CA_LEN>>) {
         host: xous_ipc::String::from_str("http://127.0.0.1:1337"),
         port: None,
         path: Some(xous_ipc::String::from_str("/test")),
-        login: Some(xous_ipc::String::from_str("")),
-        password: Some(xous_ipc::String::from_str("")),
+        login: None,
+        password: None,
         certificate_authority: certificate_authority,
-        sub_protocols: [Some(xous_ipc::String::from_str(PROTOCOL)), None, None],
+        sub_protocol: Some(xous_ipc::String::from_str(PROTOCOL)),
     };
     log::info!("Opening websocket with {:#?}", config);
 

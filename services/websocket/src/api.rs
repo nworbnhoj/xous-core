@@ -82,7 +82,7 @@ pub enum Return {
 }
 
 // a structure for defining the setup of a Websocket.
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, Copy)]
 pub struct WebsocketConfig {
     /** the callback id for inbound data frames */
     pub cid: u32,
@@ -101,7 +101,7 @@ pub struct WebsocketConfig {
     /** optional ca for a TLS connection - fallback to tcp */
     pub certificate_authority: Option<xous_ipc::String<CA_LEN>>,
     /** websocket sub-protocols max 3*/
-    pub sub_protocols: [Option<xous_ipc::String<SUB_PROTOCOL_LEN>>; 3],
+    pub	sub_protocol: Option<xous_ipc::String<SUB_PROTOCOL_LEN>>,
 }
 
 #[derive(Debug)]

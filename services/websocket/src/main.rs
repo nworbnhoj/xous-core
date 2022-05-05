@@ -3,7 +3,6 @@
 
 mod api;
 mod manager;
-mod poll;
 
 use api::{validate_msg, Opcode, Return, WebsocketConfig, WsError};
 
@@ -61,15 +60,9 @@ fn xmain() -> ! {
                     continue;
                 }
                 let pid = msg.sender.pid().unwrap();
-                let mut buf = unsafe {
-                    Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap())
-                };
-
                 let response = msg
                     .forward(ws_manager_cid, ClientOp::Open as _)
                     .expect("failed to forward Opcode::Open");
-
-                buf.replace(response).expect("failed replace buffer");
                 log::info!("Websocket Opcode::Open complete");
             }
             Some(Opcode::Send) => {
