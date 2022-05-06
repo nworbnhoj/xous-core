@@ -84,15 +84,15 @@ fn test_app(certificate_authority: Option<xous_ipc::String<CA_LEN>>) {
     let config = WebsocketConfig {
         cid: cid,
         opcode: TestOpcode::Receive.to_u32().unwrap(),
-        host: xous_ipc::String::from_str("http://127.0.0.1:1337"),
-        port: None,
+        host: xous_ipc::String::from_str("ws://127.0.0.1"),
+        port: Some(xous_ipc::String::from_str("1337")),
         path: Some(xous_ipc::String::from_str("/test")),
         login: None,
         password: None,
         certificate_authority: certificate_authority,
         sub_protocol: Some(xous_ipc::String::from_str(PROTOCOL)),
     };
-    log::info!("Opening websocket with {:#?}", config);
+    log::trace!("Opening websocket with {:#?}", config);
 
     // Request the websocket_client_service to open a websocket with WebsocketConfig
     let mut buf = Buffer::into_buf(config)

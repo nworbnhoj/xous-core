@@ -94,8 +94,14 @@ impl Client {
     pub(crate) fn new(ws_config: WebsocketConfig, cid: CID, opcode: u32) -> Result<Self, Error> {
         log::info!("Configuring new WebSocket");
         // construct url from ws_config
-        let host = ws_config.host.as_str().expect("url utf-8 decode fail");
-        let mut url = Url::parse(host).expect("invalid host");
+        let host = ws_config.host.as_str().expect("host utf-8 decode fail");
+        let mut url = match Url::parse(host) {
+            Ok(url) => url,
+            Err(e) => {
+                log::warn!("invalid websocket host {:?}", e);
+                return Err(Error::from(ErrorKind::InvalidInput));
+            }
+        };
         let path = match ws_config.path {
             Some(path) => {
                 let path = path.as_str().expect("path utf-8 decode error");
@@ -132,8 +138,13 @@ impl Client {
         };
 
         // Create a TCP Stream between this device and the remote Server
-        log::info!("Opening TCP connection to {:?}", host);
-        let mut tcp_stream = match TcpStream::connect(url.as_str()) {
+        let tcp_url = format!(
+            "{}:{}",
+            url.host_str().unwrap(),
+            url.port().unwrap()
+        );
+        log::info!("Opening TCP connection to {:?}", tcp_url);
+        let mut tcp_stream = match TcpStream::connect(tcp_url.clone()) {
             Ok(tcp_stream) => tcp_stream,
             Err(e) => {
                 log::warn!("Failed to open TCP Stream {:?}", e);
@@ -141,7 +152,7 @@ impl Client {
             }
         };
         let tcp_clone = tcp_stream.try_clone().expect("Failed to clone TCP Stream");
-        log::info!("TCP connected to {:?}", host);
+        log::info!("TCP connected to {:?}", tcp_url);
 
         let mut ws_stream = match ws_config.certificate_authority {
             None => WsStream::Tcp(tcp_stream),
@@ -263,7 +274,6 @@ impl Client {
 
     /** read all available frames from the websocket and relay each frame to the caller_id */
     fn read(&mut self) {
-
         let mut framer = Framer::new(
             &mut self.read_buf[..],
             &mut self.read_cursor,
@@ -345,7 +355,14 @@ impl Client {
 }
 
 pub(crate) fn main(sid: SID) -> ! {
-    log_server::init_wait().unwrap();
+    //log_server::init_wait().unwrap();
+    let _ = match log_server::init_wait() {
+        Ok(_) => {
+            println!("log_server OK ");
+            ()
+        }
+        Err(e) => println!("log_server Error {:#?}", e),
+    };
     log::set_max_level(log::LevelFilter::Info);
     log::trace!("my PID is {}", xous::process::id());
 
