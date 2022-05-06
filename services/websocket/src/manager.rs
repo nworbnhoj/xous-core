@@ -3,7 +3,6 @@
 
 use super::*;
 use crate::api::{validate_msg, WsError, WsStream, SUB_PROTOCOL_LEN};
-use crate::poll::*;
 
 use embedded_websocket as ws;
 use num_traits::{FromPrimitive, ToPrimitive};
@@ -26,6 +25,8 @@ use std::time::Duration;
 
 /** time between reglar websocket keep-alive requests */
 pub(crate) const KEEPALIVE_TIMEOUT_SECONDS: Duration = Duration::from_secs(55);
+/** time between regular poll for inbound frames */
+pub(crate) const LISTENER_POLL_INTERVAL_MS: Duration = Duration::from_millis(250);
 pub(crate) const HINT_LEN: usize = 128;
 /** limit on the byte length of certificate authority strings */
 /*
@@ -50,6 +51,8 @@ pub enum Opcode {
     Close = 1,
     ///
     Open,
+    /// poll open Websockets for inbound frames
+    Poll,
     /// send a websocket frame
     Send,
     /// Return the current State of the websocket
@@ -89,14 +92,15 @@ pub(crate) struct Client {
 
 impl Client {
     pub(crate) fn new(ws_config: WebsocketConfig, cid: CID, opcode: u32) -> Result<Self, Error> {
+        log::info!("Configuring new WebSocket");
         // construct url from ws_config
         let host = ws_config.host.as_str().expect("url utf-8 decode fail");
         let mut url = Url::parse(host).expect("invalid host");
         let path = match ws_config.path {
             Some(path) => {
-               let path = path.as_str().expect("path utf-8 decode error");
-               url = url.join(path).expect("valid path");
-               path.to_string()            
+                let path = path.as_str().expect("path utf-8 decode error");
+                url = url.join(path).expect("valid path");
+                path.to_string()
             }
             None => "".to_string(),
         };
@@ -112,11 +116,11 @@ impl Client {
             Some(login) => {
                 let login = login.as_str().expect("login utf-8 decode error");
                 url.query_pairs_mut().append_pair("login", &login);
-                }
+            }
             None => {}
         }
         match ws_config.password {
-            Some(pwd) => { 
+            Some(pwd) => {
                 let password = pwd.as_str().expect("password utf-8 decode error");
                 url.query_pairs_mut().append_pair("password", password);
             }
@@ -170,19 +174,21 @@ impl Client {
                 WsStream::Tls(tls_stream)
             }
         };
-        
-       
+
         let sub_protocol;
         let mut sub_protocol_arr: [&str; 1] = [""];
         let sub_protocols: Option<&[&str]> = match ws_config.sub_protocol {
             Some(sp) => {
-                 sub_protocol = sp.as_str().expect("sub_protocol 0 utf-8 decode error").to_string();
-                 sub_protocol_arr[0] = &sub_protocol;
-                 Some(&sub_protocol_arr[..])
+                sub_protocol = sp
+                    .as_str()
+                    .expect("sub_protocol 0 utf-8 decode error")
+                    .to_string();
+                sub_protocol_arr[0] = &sub_protocol;
+                Some(&sub_protocol_arr[..])
             }
             None => None,
         };
-        
+
         // Prepare for a websocket connection
         let mut read_buf = [0u8; WEBSOCKET_BUFFER_LEN];
         let mut read_cursor = 0;
@@ -236,20 +242,48 @@ impl Client {
         true
     }
 
-    pub(crate) fn spawn_poll(&self) {
-        let poll = Poll::new(
-            self.cid,
-            self.opcode,
-            self.tcp_stream,
-            self.ws_stream,
-            self.socket,
-        );
-
-        thread::spawn({
-            move || {
-                poll.main();
+    fn empty(&self) -> bool {
+        self.tcp_stream
+            .set_nonblocking(true)
+            .expect("failed to set TCP Stream to non-blocking");
+        let mut frame_buf = [0u8; 8];
+        let empty = match self.tcp_stream.peek(&mut frame_buf) {
+            Ok(_) => false,
+            Err(ref e) if e.kind() == ErrorKind::WouldBlock => true,
+            Err(e) => {
+                log::warn!("TCP IO error: {}", e);
+                true
             }
-        });
+        };
+        self.tcp_stream
+            .set_nonblocking(false)
+            .expect("failed to set TCP Stream to non-blocking");
+        empty
+    }
+
+    /** read all available frames from the websocket and relay each frame to the caller_id */
+    fn read(&mut self) {
+
+        let mut framer = Framer::new(
+            &mut self.read_buf[..],
+            &mut self.read_cursor,
+            &mut self.write_buf[..],
+            &mut self.socket,
+        );
+        let mut frame_buf = [0u8; WEBSOCKET_PAYLOAD_LEN];
+
+        while let Some(frame) = framer
+            .read_binary(&mut self.ws_stream, &mut frame_buf[..])
+            .expect("failed to read websocket")
+        {
+            let frame: [u8; WEBSOCKET_PAYLOAD_LEN] = frame
+                .try_into()
+                .expect("websocket frame too large for buffer");
+            let buf = Buffer::into_buf(Frame { bytes: frame })
+                .expect("failed to serialize websocket frame into buffer");
+            buf.send(self.cid, self.opcode)
+                .expect("failed to relay websocket frame");
+        }
     }
 
     fn write(&mut self, buffer: &[u8]) -> Result<(), Error> {
@@ -318,14 +352,17 @@ pub(crate) fn main(sid: SID) -> ! {
     let xns = xous_names::XousNames::new().unwrap();
     let cid = xous::connect(sid).unwrap();
 
-    // build a thread that emits a regular WebSocketOp::Tick to send a KeepAliveRequest
+    // build a thread that emits a regular Opcode::Tick to send a KeepAliveRequest
     spawn_tick_pump(cid);
+
+    // build a thread that emits a regular Opcode::Poll to receive inbound frames
+    spawn_poll_pump(cid);
 
     /* holds the assets of existing websockets by pid - and as such - limits each pid to 1 websocket. */
     // TODO review the limitation of 1 websocket per pid.
     let mut clients: HashMap<NonZeroU8, Client> = HashMap::new();
 
-    log::trace!("ready to accept requests");
+    log::info!("ready to accept requests");
     loop {
         let mut msg = xous::receive_message(sid).unwrap();
         match FromPrimitive::from_usize(msg.body.id()) {
@@ -368,7 +405,6 @@ pub(crate) fn main(sid: SID) -> ! {
                     Ok(client) => {
                         let sub_protocol = client.sub_protocol;
                         clients.insert(pid, client);
-                        client.spawn_poll();
                         buf.replace(Return::SubProtocol(sub_protocol))
                             .expect("failed replace buffer");
                     }
@@ -376,6 +412,19 @@ pub(crate) fn main(sid: SID) -> ! {
                         let hint = format!("failed to open Websocket {:?}", e);
                         buf.replace(drop(&hint)).expect("failed replace buffer");
                     }
+                }
+            }
+            Some(Opcode::Poll) => {
+                log::trace!("Websocket Poll");
+
+                for (_pid, client) in &mut clients {
+                    if client.empty() {
+                        continue;
+                    }
+
+                    log::trace!("Websocket Read");
+                    client.read();
+                    log::trace!("Websocket Read complete");
                 }
             }
             Some(Opcode::Send) => {
@@ -512,6 +561,30 @@ fn spawn_tick_pump(ws_manager_cid: CID) {
                     xous::Message::new_scalar(
                         Opcode::Tick.to_usize().unwrap(),
                         KEEPALIVE_TIMEOUT_SECONDS.as_secs().try_into().unwrap(),
+                        0,
+                        0,
+                        0,
+                    ),
+                )
+                .expect("couldn't send Websocket tick");
+            }
+        }
+    });
+}
+
+// build a thread that emits a regular WebSocketOp::Poll to send a KeepAliveRequest
+fn spawn_poll_pump(ws_manager_cid: CID) {
+    thread::spawn({
+        move || {
+            let tt = ticktimer_server::Ticktimer::new().unwrap();
+            loop {
+                tt.sleep_ms(LISTENER_POLL_INTERVAL_MS.as_millis().try_into().unwrap())
+                    .unwrap();
+                xous::send_message(
+                    ws_manager_cid,
+                    xous::Message::new_scalar(
+                        Opcode::Poll.to_usize().unwrap(),
+                        LISTENER_POLL_INTERVAL_MS.as_millis().try_into().unwrap(),
                         0,
                         0,
                         0,
