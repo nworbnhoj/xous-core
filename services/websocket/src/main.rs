@@ -4,7 +4,7 @@
 mod api;
 mod manager;
 
-use api::{validate_msg, Opcode, Return, WebsocketConfig, WsError};
+use api::{Opcode, Return, WebsocketConfig, WsError};
 
 use manager::Opcode as ClientOp;
 use num_traits::{FromPrimitive, ToPrimitive};
@@ -17,7 +17,7 @@ use std::thread;
 fn xmain() -> ! {
     log_server::init_wait().unwrap();
     log::set_max_level(log::LevelFilter::Info);
-    log::info!("my PID is {}", xous::process::id());
+    log::trace!("my PID is {}", xous::process::id());
 
     let xns = xous_names::XousNames::new().unwrap();
     let ws_sid = xns
@@ -114,4 +114,53 @@ fn xmain() -> ! {
     xous::destroy_server(ws_sid).unwrap();
     log::trace!("quitting");
     xous::terminate_process(0)
+}
+
+pub(crate) fn validate_msg(
+    env: &mut xous::MessageEnvelope,
+    expected: WsError,
+    opcode: u32,
+) -> bool {
+    let is_blocking = env.body.is_blocking();
+    match env.body.memory_message_mut() {
+        None => {
+            if (expected == WsError::Scalar && is_blocking)
+                || (expected == WsError::ScalarBlock && !is_blocking)
+            {
+                log::warn!("invalid xous:MessageEnvelope for Opcode::{:#?}", opcode);
+                xous::return_scalar(env.sender, expected as usize).ok();
+                return false;
+            };
+        }
+        Some(body) => {
+            if (expected == WsError::Memory && is_blocking)
+                || (expected == WsError::MemoryBlock && !is_blocking)
+            {
+                log::warn!("invalid xous:MessageEnvelope for Opcode::{:#?}", opcode);
+                body.valid = None;
+                let s: &mut [u8] = body.buf.as_slice_mut();
+                let mut i = s.iter_mut();
+
+                // Duplicate error to ensure it's seen as an error regardless of byte order/return type
+                // This is necessary because errors are encoded as `u8` slices, but "good"
+                // responses may be encoded as `u16` or `u32` slices.
+                *i.next().expect("failed to set msg byte") = 1;
+                *i.next().expect("failed to set msg byte") = 1;
+                *i.next().expect("failed to set msg byte") = 1;
+                *i.next().expect("failed to set msg byte") = 1;
+                *i.next().expect("failed to set msg byte") = expected as u8;
+                *i.next().expect("failed to set msg byte") = 0;
+                *i.next().expect("failed to set msg byte") = 0;
+                *i.next().expect("failed to set msg byte") = 0;
+                return false;
+            }
+        }
+    };
+    true
+}
+
+/** helper function to return hints from opcode panics */
+pub(crate) fn drop(hint: &str) -> Return {
+    log::warn!("{}", hint);
+    Return::Failure(xous_ipc::String::from_str(hint))
 }

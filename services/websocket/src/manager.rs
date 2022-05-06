@@ -2,7 +2,7 @@
 #![cfg_attr(target_os = "none", no_main)]
 
 use super::*;
-use crate::api::{validate_msg, WsError, WsStream, SUB_PROTOCOL_LEN};
+use crate::api::{WsError, WsStream, SUB_PROTOCOL_LEN};
 
 use embedded_websocket as ws;
 use num_traits::{FromPrimitive, ToPrimitive};
@@ -347,7 +347,7 @@ impl Client {
 pub(crate) fn main(sid: SID) -> ! {
     log_server::init_wait().unwrap();
     log::set_max_level(log::LevelFilter::Info);
-    log::info!("my PID is {}", xous::process::id());
+    log::trace!("my PID is {}", xous::process::id());
 
     let xns = xous_names::XousNames::new().unwrap();
     let cid = xous::connect(sid).unwrap();
@@ -368,9 +368,6 @@ pub(crate) fn main(sid: SID) -> ! {
         match FromPrimitive::from_usize(msg.body.id()) {
             Some(Opcode::Close) => {
                 log::info!("Websocket Opcode::Close");
-                if !validate_msg(&mut msg, WsError::Scalar, Opcode::Close.to_u32().unwrap()) {
-                    continue;
-                }
                 let pid = msg.sender.pid().unwrap();
                 let mut framer: Framer<rand::rngs::OsRng, embedded_websocket::Client>;
                 let client = match clients.get_mut(&pid) {
@@ -392,9 +389,6 @@ pub(crate) fn main(sid: SID) -> ! {
                 log::info!("Websocket Opcode::Close complete");
             }
             Some(Opcode::Open) => {
-                if !validate_msg(&mut msg, WsError::Memory, Opcode::Open.to_u32().unwrap()) {
-                    continue;
-                }
                 let pid = msg.sender.pid().unwrap();
                 let mut buf = unsafe {
                     Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap())
@@ -428,9 +422,6 @@ pub(crate) fn main(sid: SID) -> ! {
                 }
             }
             Some(Opcode::Send) => {
-                if !validate_msg(&mut msg, WsError::Memory, Opcode::Send.to_u32().unwrap()) {
-                    continue;
-                }
                 log::info!("Websocket Opcode::Send");
                 let pid = msg.sender.pid().unwrap();
                 let mut buf = unsafe {
@@ -456,14 +447,6 @@ pub(crate) fn main(sid: SID) -> ! {
                 log::info!("Websocket Opcode::Send complete");
             }
             Some(Opcode::State) => {
-                log::info!("Websocket Opcode::State");
-                if !validate_msg(
-                    &mut msg,
-                    WsError::ScalarBlock,
-                    Opcode::State.to_u32().unwrap(),
-                ) {
-                    continue;
-                }
                 let pid = msg.sender.pid().unwrap();
                 match clients.get_mut(&pid) {
                     Some(client) => {
@@ -487,9 +470,6 @@ pub(crate) fn main(sid: SID) -> ! {
             }
             Some(Opcode::Tick) => {
                 log::info!("Websocket Opcode::Tick");
-                if !validate_msg(&mut msg, WsError::Scalar, Opcode::Tick.to_u32().unwrap()) {
-                    continue;
-                }
                 let pid = msg.sender.pid().unwrap();
                 let mut framer: Framer<rand::rngs::OsRng, embedded_websocket::Client>;
                 let response = match clients.get_mut(&pid) {
@@ -524,9 +504,6 @@ pub(crate) fn main(sid: SID) -> ! {
 
             Some(Opcode::Quit) => {
                 log::warn!("Websocket Opcode::Quit");
-                if !validate_msg(&mut msg, WsError::Scalar, Opcode::Quit.to_u32().unwrap()) {
-                    continue;
-                }
                 let close_op = Opcode::Close.to_usize().unwrap();
                 for (_pid, client) in &mut clients {
                     xous::send_message(client.cid, xous::Message::new_scalar(close_op, 0, 0, 0, 0))
