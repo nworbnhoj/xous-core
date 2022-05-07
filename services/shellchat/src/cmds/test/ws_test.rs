@@ -2,7 +2,7 @@ mod ws_test_server;
 
 use num_traits::{FromPrimitive, ToPrimitive};
 use std::thread;
-use websocket::{Opcode, Return, WebsocketConfig, CA_LEN, SERVER_NAME_WEBSOCKET};
+use websocket::{Opcode, Return, WebsocketConfig, SERVER_NAME_WEBSOCKET};
 use xous::send_message;
 use xous::Message;
 use xous_ipc::Buffer;
@@ -17,10 +17,14 @@ enum TestOpcode {
 }
 
 pub fn local(tls: bool) {
+    //log_server::init_wait().unwrap();
+    log::set_max_level(log::LevelFilter::Info);
+    log::trace!("my PID is {}", xous::process::id());
+    
     log::info!("Starting local websocket server");
     thread::spawn({
         move || {
-            ws_test_server::main();
+            ws_test_server::main().unwrap();
         }
     });
     log::info!("Started local websocket server on 127.0.0.1:1337");
@@ -32,7 +36,7 @@ pub fn local(tls: bool) {
         false => None,
     };
 
-    let tt = ticktimer_server::Ticktimer::new().unwrap();
+    let _tt = ticktimer_server::Ticktimer::new().unwrap();
     let xns = xous_names::XousNames::new().unwrap();
     let sid = xous::create_server().expect("couldn't create ws_test server");
     let cid: u32 = xous::connect(sid).unwrap();
@@ -102,23 +106,20 @@ pub fn local(tls: bool) {
         .expect("failed to send via websocket");
 
     // wait around for test bytes from the websocket
-    loop {
-        let mut msg = xous::receive_message(sid).unwrap();
-        match FromPrimitive::from_usize(msg.body.id()) {
-            Some(TestOpcode::Receive) => {
-                log::info!("Received TestOpcode::Receive");
-                let buf = unsafe {
-                    Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap())
-                };
-                let inbound = buf
-                    .to_original::<xous_ipc::String<TEST_MSG_SIZE>, _>()
-                    .unwrap();
-                log::info!("Completed TestOpcode::Receive: {}", inbound);
-                continue;
-            }
-            None => {
-                log::error!("couldn't convert opcode: {:?}", msg);
-            }
+    let mut msg = xous::receive_message(sid).unwrap();
+    match FromPrimitive::from_usize(msg.body.id()) {
+        Some(TestOpcode::Receive) => {
+            log::info!("Received TestOpcode::Receive");
+            let buf = unsafe {
+                Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap())
+            };
+            let inbound = buf
+                .to_original::<xous_ipc::String<TEST_MSG_SIZE>, _>()
+                .unwrap();
+            log::info!("Completed TestOpcode::Receive: {}", inbound);
+        }
+        None => {
+            log::error!("couldn't convert opcode: {:?}", msg);
         }
     }
 
