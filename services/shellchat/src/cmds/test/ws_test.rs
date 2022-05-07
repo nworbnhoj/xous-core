@@ -13,9 +13,7 @@ const PROTOCOL: &str = "echo";
 
 #[derive(num_derive::FromPrimitive, num_derive::ToPrimitive, Debug)]
 enum TestOpcode {
-    Send,
     Receive,
-    Quit,
 }
 
 pub fn local(tls: bool) {
@@ -27,57 +25,19 @@ pub fn local(tls: bool) {
     });
     log::info!("Started local websocket server on 127.0.0.1:1337");
 
-    let ca = match tls {
+    let certificate_authority = match tls {
         true => Some(xous_ipc::String::from_str(
             "TODO invalid certificate authority",
         )),
         false => None,
     };
 
-    // start test_app
-    thread::spawn({
-        move || {
-            test_app(ca);
-        }
-    });
-
     let tt = ticktimer_server::Ticktimer::new().unwrap();
     let xns = xous_names::XousNames::new().unwrap();
-
-    // pause to allow test_app to get up and running
-    tt.sleep_ms(1000).expect("insomnia");
-    let test_app_cid = xns
-        .request_connection_blocking(WS_TEST_NAME)
-        .expect("Cannot connect to test_app");
-
-    log::info!("Send TestOpcode::Send");
-    xous::send_message(
-        test_app_cid,
-        xous::Message::new_scalar(TestOpcode::Send.to_usize().unwrap(), 0, 0, 0, 0),
-    )
-    .expect("failed to send test_app msg");
-
-    // pause to allow local websocket server to echo messages
-    tt.sleep_ms(5000).expect("insomnia");
-
-    log::info!("Send TestOpcode::Quit (also triggers websocket close)");
-    xous::send_message(
-        test_app_cid,
-        xous::Message::new_scalar(TestOpcode::Quit.to_usize().unwrap(), 0, 0, 0, 0),
-    )
-    .expect("failed to send test_app quit");
-}
-
-fn test_app(certificate_authority: Option<xous_ipc::String<CA_LEN>>) {
-    log::info!("Starting Websocket test App");
-    // register this test_app with xous
-    let xns = xous_names::XousNames::new().unwrap();
-    let sid = xns
-        .register_name(WS_TEST_NAME, None)
-        .expect("can't register server");
-    log::trace!("registered with NS -- {:?}", sid);
+    let sid = xous::create_server().expect("couldn't create ws_test server");
     let cid: u32 = xous::connect(sid).unwrap();
 
+    // prepare to open websocket
     let ws_cid = xns
         .request_connection_blocking(SERVER_NAME_WEBSOCKET)
         .expect("Cannot connect to websocket server");
@@ -117,6 +77,7 @@ fn test_app(certificate_authority: Option<xous_ipc::String<CA_LEN>>) {
         Return::Failure(hint) => log::info!("FAIL: on retrieve protocol: {:?}", hint),
     };
 
+    // check that Websocket is open
     match send_message(
         ws_cid,
         Message::new_blocking_scalar(Opcode::State.to_usize().unwrap(), 0, 0, 0, 0),
@@ -129,22 +90,21 @@ fn test_app(certificate_authority: Option<xous_ipc::String<CA_LEN>>) {
         _ => log::info!("FAIL Unable to retrieve Websocket state"),
     }
 
+    // Send test bytes via websocket
+
+    let outbound: xous_ipc::String<TEST_MSG_SIZE> = xous_ipc::String::from_str("please echo me");
+    let buf = Buffer::into_buf(outbound).expect("failed put msg in buffer");
+
+    log::info!("Outbound Buffer {:?}", &buf[..64]);
+
+    buf.send(ws_cid, Opcode::Send.to_u32().unwrap())
+        .map(|_| ())
+        .expect("failed to send via websocket");
+
+    // wait around for test bytes from the websocket
     loop {
         let mut msg = xous::receive_message(sid).unwrap();
         match FromPrimitive::from_usize(msg.body.id()) {
-            Some(TestOpcode::Send) => {
-                log::info!("Received TestOpcode::Send");
-                let outbound: xous_ipc::String<TEST_MSG_SIZE> =
-                    xous_ipc::String::from_str("please echo me");
-                let buf = Buffer::into_buf(outbound).expect("failed put msg in buffer");
-
-                log::info!("Outbound Buffer {:?}", &buf[..64]);
-
-                buf.send(ws_cid, Opcode::Send.to_u32().unwrap())
-                    .map(|_| ())
-                    .expect("failed to send via websocket");
-                log::info!("Completed TestOpcode::Send");
-            }
             Some(TestOpcode::Receive) => {
                 log::info!("Received TestOpcode::Receive");
                 let buf = unsafe {
@@ -154,10 +114,7 @@ fn test_app(certificate_authority: Option<xous_ipc::String<CA_LEN>>) {
                     .to_original::<xous_ipc::String<TEST_MSG_SIZE>, _>()
                     .unwrap();
                 log::info!("Completed TestOpcode::Receive: {}", inbound);
-            }
-            Some(TestOpcode::Quit) => {
-                log::info!("Received TestOpcode::Quit");
-                break;
+                continue;
             }
             None => {
                 log::error!("couldn't convert opcode: {:?}", msg);
@@ -165,6 +122,7 @@ fn test_app(certificate_authority: Option<xous_ipc::String<CA_LEN>>) {
         }
     }
 
+    // close the websocket
     log::info!("Closing websocket");
     xous::send_message(
         ws_cid,
