@@ -40,6 +40,7 @@ modals = {path="../modals"}
 websocket = {path="../websocket"}
 embedded-websocket = { version = "0.8.0" }
 httparse = "1.7.0"
+usb-device-xous = {path="../usb-device-xous"}
 
 tts-frontend = {path="../tts"}
 locales = {path = "../../locales"}
@@ -56,6 +57,9 @@ chrono = {version = "0.4.19", default-features = false, features = ["std"]}
 spectrum-analyzer = "0.5.2"
 # used to parse net connectivity results
 com_rs-ref = {path = "../../imports/com_rs-ref"}
+
+# for net testing
+threadpool = "1.8.1"
 
 # for the curve25519 tests
 # hardware acceleration adaptations are inserted into a fork of the main branch.
