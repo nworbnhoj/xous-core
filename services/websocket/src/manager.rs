@@ -11,13 +11,17 @@ pub enum Opcode {
 }
 
 pub(crate) fn main(sid: SID) -> ! {
-    //log_server::init_wait().unwrap();
+    /* The following statement causes
+    PANIC!
+Details: PanicInfo { payload: Any { .. }, message: Some(called `Result::unwrap()` on an `Err` value: ()), location: Location { file: "services/websocket/src/manager.rs", line: 14, col: 29 } }
+    */
+    log_server::init_wait().unwrap();
 
     /* The following block causes
         PANIC!
     Details: PanicInfo { payload: Any { .. }, message: Some(failed to forward Opcode::Open: (Envelope { sender: Sender { data: 68943872 }, body: MutableBorrow(MemoryMessage { id: 0, buf: MemoryRange { addr: 140569313546240, size: 4096 }, offset: Some(4), valid: Some(4096) }) }, MemoryInUse)), location: Location { file: "services/websocket/src/main.rs", line: 41, col: 22 } }
     */
-
+/*
     let _ = match log_server::init_wait() {
         Ok(_) => {
             println!("log_server OK ");
@@ -25,6 +29,7 @@ pub(crate) fn main(sid: SID) -> ! {
         }
         Err(e) => println!("log_server Error {:#?}", e),
     };
+    */
     log::set_max_level(log::LevelFilter::Info);
     log::trace!("my PID is {}", xous::process::id());
 
