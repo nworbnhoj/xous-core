@@ -43,7 +43,7 @@ use num_enum::FromPrimitive as EnumFromPrimitive;
 
 use embedded_time::Clock;
 use std::convert::TryInto;
-use keyboard::KeyMap;
+
 use xous_ipc::Buffer;
 
 pub struct EmbeddedClock {
@@ -78,7 +78,7 @@ fn xmain() -> ! {
     let llio = llio::Llio::new(&xns);
     let tt = ticktimer_server::Ticktimer::new().unwrap();
     let native_kbd = keyboard::Keyboard::new(&xns).unwrap();
-    let native_map = native_kbd.get_keymap().unwrap();
+    let _native_map = native_kbd.get_keymap().unwrap();
 
     #[cfg(any(target_os = "none", target_os = "xous"))]
     let serial_number = format!("{:x}", llio.soc_dna().unwrap());
@@ -275,7 +275,7 @@ fn xmain() -> ! {
             }
             Some(Opcode::SendString) => {
                 let mut buffer = unsafe { Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap()) };
-                let mut usb_send = buffer.to_original::<api::UsbString, _>().unwrap();
+                let  usb_send = buffer.to_original::<api::UsbString, _>().unwrap();
                 #[cfg(any(target_os = "none", target_os = "xous"))]
                 {
                     let mut sent = 0;

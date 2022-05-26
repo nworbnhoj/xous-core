@@ -610,8 +610,8 @@ impl<'a> ShellCmdApi<'a> for Test {
                         write!(ret, "Ship mode request denied").unwrap();
                     }
                 }
-                "websocket" => {
-                    ws_test::local(false);                
+                "ws" => {
+                    ws_test::local();                
                 }
                 _ => {
                     () // do nothing
