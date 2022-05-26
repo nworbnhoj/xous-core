@@ -1,10 +1,10 @@
+use embedded_websocket as ws;
+use rustls::{ClientConnection, StreamOwned};
 /// The websocket service can open, maintain and close a websocket connection.
 /// The service can also send data and regularly polls the connection for inbound
 /// data to forward to the CID provided when the websocket was opened.
 use std::io::Error;
 use std::net::TcpStream;
-use embedded_websocket as ws;
-use rustls::{ClientConnection, StreamOwned};
 
 #[allow(dead_code)]
 pub const SERVER_NAME_WEBSOCKET: &str = "_Websocket Service_";
@@ -101,7 +101,7 @@ pub struct WebsocketConfig {
     /** optional ca for a TLS connection - fallback to tcp */
     pub certificate_authority: Option<xous_ipc::String<CA_LEN>>,
     /** websocket sub-protocols max 3*/
-    pub	sub_protocol: Option<xous_ipc::String<SUB_PROTOCOL_LEN>>,
+    pub sub_protocol: Option<xous_ipc::String<SUB_PROTOCOL_LEN>>,
 }
 
 #[derive(Debug)]
@@ -125,5 +125,3 @@ impl ws::framer::Stream<Error> for WsStream {
         }
     }
 }
-
-

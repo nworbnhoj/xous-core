@@ -114,7 +114,7 @@ impl Client {
             match ws_config.port.unwrap().to_string().parse() {
                 Ok(int) => url.set_port(Some(int)).unwrap(),
                 Err(e) => {
-                    log::warn!("failed to parse websocket port");
+                    log::warn!("failed to parse websocket port {}", e);
                 }
             }
         }
@@ -138,13 +138,9 @@ impl Client {
         };
 
         // Create a TCP Stream between this device and the remote Server
-        let tcp_url = format!(
-            "{}:{}",
-            url.host_str().unwrap(),
-            url.port().unwrap()
-        );
+        let tcp_url = format!("{}:{}", url.host_str().unwrap(), url.port().unwrap());
         log::info!("Opening TCP connection to {:?}", tcp_url);
-        let mut tcp_stream = match TcpStream::connect(tcp_url.clone()) {
+        let tcp_stream = match TcpStream::connect(tcp_url.clone()) {
             Ok(tcp_stream) => tcp_stream,
             Err(e) => {
                 log::warn!("Failed to open TCP Stream {:?}", e);
@@ -247,7 +243,7 @@ impl Client {
         })
     }
 
-    pub(crate) fn Ok(&self) -> bool {
+    pub(crate) fn ok(&self) -> bool {
         //TODO fix framer status
         //self.framer.status() == WebSocketState::Open
         true
@@ -317,14 +313,14 @@ impl Client {
             } else {
                 slice = &buffer[start..(start + WEBSOCKET_PAYLOAD_LEN)];
             }
-            let ret = match framer.write(
+            ret = match framer.write(
                 &mut self.ws_stream,
                 MessageType::Binary,
                 end_of_message,
                 slice,
             ) {
-                Ok(ret) => (),
-                Err(e) => {
+                Ok(ret) => Ok(ret),
+                Err(_e) => {
                     return Err(Error::new(
                         ErrorKind::BrokenPipe,
                         "Failed to write websocket frame",
@@ -345,7 +341,7 @@ impl Client {
         );
 
         match framer.close(&mut self.ws_stream, StatusCode::NormalClosure, None) {
-            Ok(ret) => Ok(()),
+            Ok(_ret) => Ok(()),
             Err(e) => {
                 log::warn!("Failed to close WebSocket {:?}", e);
                 return Err(Error::from(ErrorKind::Other));
@@ -386,10 +382,21 @@ pub(crate) fn main(sid: SID) -> ! {
             Some(Opcode::Close) => {
                 log::info!("Websocket Opcode::Close");
                 let pid = msg.sender.pid().unwrap();
-                let mut framer: Framer<rand::rngs::OsRng, embedded_websocket::Client>;
-                let client = match clients.get_mut(&pid) {
+                let _client = match clients.get_mut(&pid) {
                     Some(client) => match client.close() {
-                        Ok(()) => log::info!("Sent close handshake"),
+                        Ok(()) => {
+                            let mut framer = Framer::new(
+                                &mut client.read_buf,
+                                &mut client.read_cursor,
+                                &mut client.write_buf,
+                                &mut client.socket,
+                            );
+
+                            match framer.close(&mut client.ws_stream, StatusCode::NormalClosure, None) {
+                                Ok(_) => log::info!("Sent close handshake"),
+                                Err(_e) => log::info!("Failed to send websocket close handshake"),
+                            }
+                        }
                         Err(e) => {
                             log::warn!("Failed to send close handshake {:?}", e);
                             xous::return_scalar(msg.sender, WsError::ProtocolError as usize).ok();
@@ -445,7 +452,7 @@ pub(crate) fn main(sid: SID) -> ! {
                     Buffer::from_memory_message_mut(msg.body.memory_message_mut().unwrap())
                 };
 
-                let mut client = match clients.get_mut(&pid) {
+                let client = match clients.get_mut(&pid) {
                     Some(client) => client,
 
                     None => {

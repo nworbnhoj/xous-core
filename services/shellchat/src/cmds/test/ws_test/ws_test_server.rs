@@ -99,7 +99,7 @@ fn handle_client(mut stream: TcpStream) -> Result<(), WebServerError> {
 
         // read websocket frames
         //while let bytes = match framer.read_binary(&mut stream, &mut frame_buf)? {
-        let bytes = match framer.read_binary(&mut stream, &mut frame_buf)? {
+        let _bytes = match framer.read_binary(&mut stream, &mut frame_buf)? {
             Some(bytes) => {
                 log::info!("Received {} bytes", bytes.len());
                 // send the bytes back to the client
