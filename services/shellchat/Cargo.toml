@@ -74,6 +74,9 @@ tracking-allocator = {version = "0.3.0", optional = true}
 tracing = {version = "0.1.35", optional = true}
 tracing-subscriber = {version = "0.3.11", optional = true}
 
+# for websocket testing
+websocket = {path = "../../libs/websocket"}
+
 # for rustls testing
 rustls = {version = "0.20.6", optional = true} # note requirement for patch to xous-ring in workspace Cargo.toml
 # rustls = {path="../../../rustls/rustls"}

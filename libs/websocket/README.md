@@ -57,3 +57,17 @@ send_message(ws_cid, Message::new_blocking_scalar(Opcode::Close.into(), 0, 0, 0,
 ## Notes
 
 * [embedded-websocket](https://crates.io/crates/embedded-websocket) does not support the negotiation of sub-protocols (see [pull request](https://github.com/ninjasource/embedded-websocket/pull/10)).
+
+## Test local
+
+A local (non-tls) test can be conducted on a local webserver.
+`libs::websocket::test` sets off the following chain of events:
+`use libs::websocket as ws`
+* `ws::test` spawns a local webserver `ws::test::test_server` listening on port 1337,
+* `ws::test` configures a `Websocket` and spawns a `ws::server` xous websocket server,
+* `ws::test` sends a few bytes in a `Borrow Message` to `ws::server`, and awaits inbound bytes,
+* `ws::server` receives the `Borrow Message` and sends a websocket-frame to `ws::test::test_server`,
+* `ws::test::test_server` receives and echos the bytes in a websocket-frame to `ws::server`,
+* `ws::server` receives the websocket-frame and sends a `Borrow Message` to `ws::test`,
+* `ws::test` receives the `Borrow Message`,
+* `ws::test` closes `ws::mod` and `ws::test_server`.

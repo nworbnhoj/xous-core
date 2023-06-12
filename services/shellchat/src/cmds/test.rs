@@ -771,6 +771,21 @@ impl<'a> ShellCmdApi<'a> for Test {
                     ).ok();
                     unsafe {xous::disconnect(bench_new_cid).ok()};
                 }
+                "websocket" => {
+                    log::info!("testing websocket local");
+                    let result = match env.com.wlan_set_on() {
+                        Ok(_) => {
+                            match websocket::test::local(false) {
+                                Ok(true) => "Successful local websocket test",
+                                Ok(false) => "Failed local websocket test",
+                                Err(_) => "Error in websocket test",
+                            }
+                        }
+                        Err(e) => "Failed to turn on WiFi",
+                    };
+                    log::info!("{}", result);
+                    write!(ret, "\n{}", result).ok();
+                }
                 _ => {
                     () // do nothing
                 }
