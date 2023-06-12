@@ -1,0 +1,28 @@
+[package]
+name = "websocket"
+version = "0.1.0"
+edition = "2021"
+authors = ["john <john@nhoj.info>"]
+description = "websocket client server"
+
+# Dependency versions enforced by Cargo.lock.
+[dependencies]
+log = "0.4.14"
+num-derive = {version = "0.3.3", default-features = false}
+num-traits = {version = "0.2.14", default-features = false}
+xous = "0.9.44"
+xous-ipc = "0.9.44"
+log-server = { package = "xous-api-log", version = "0.1.40" }
+ticktimer-server = { package = "xous-api-ticktimer", version = "0.9.40" }
+xous-names = { package = "xous-api-names", version = "0.9.42" }
+
+embedded-websocket = { version = "0.8.0" }
+rand = "0.8.5"
+rand_chacha = "0.3.1"
+rustls = "0.20.4"
+rkyv = {version = "0.4.3", default-features = false, features = ["const_generics"]}
+url = "2.2.2"
+webpki-roots = "0.22.6"
+
+# testing
+httparse = "1.7.0"
