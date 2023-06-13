@@ -27,14 +27,10 @@ pub fn local(tls: bool) -> Result<bool, Error> {
         }
     });
     log::info!("Started local websocket server on 127.0.0.1:1337");
-
-    let mut websocket = Websocket::new(
-        "ws://127.0.0.1",
-        Some(1337),
-        Some("/test"),
+    test(
+        "ws://127.0.0.1:1337/test",
         None,
         None,
-        tls,
         Some("test"),
         cid,
         0,

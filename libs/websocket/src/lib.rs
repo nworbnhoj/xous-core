@@ -49,7 +49,6 @@ where
     cid: CID,
     opcode: usize,
     url: Url,
-    tls: bool,
     protocol: Option<&'a str>,
     /** the underlying tcp stream */
     tcp_stream: Option<TcpStream>,
@@ -70,41 +69,30 @@ where
     TRng: RngCore,
 {
     /**
-    tls:                true for a TLS connection - fallback to tcp
-    base_url:           the url of the target websocket server
-    path:               a path to apend to the url
-    use_credentials:    true to authenticate
+    url:                the url of the target websocket server
     login:              authentication username
     password:           authentication password
+    protocol:           websocket sub-protocol
     cid:
     opcode:             the opcode for inbound data frames
     */
     pub fn new(
-        host: &'a str,
-        port: Option<u16>,
-        path: Option<&'a str>,
+        url: &'a str,
         login: Option<&'a str>,
         password: Option<&'a str>,
-        tls: bool,
         protocol: Option<&'a str>,
         cid: CID,
         opcode: usize,
         rng: TRng,
     ) -> Result<Websocket<'a, TRng>, Error> {
         // construct url
-        let mut url = match Url::parse(host) {
+        let mut url = match Url::parse(url) {
             Ok(url) => url,
             Err(e) => {
                 log::warn!("invalid websocket host {:?}", e);
                 return Err(Error::from(ErrorKind::InvalidInput));
             }
         };
-        if path.is_some() {
-            url = url.join(path.unwrap()).expect("valid path");
-        };
-        if port.is_some() {
-            url.set_port(port).expect("valid port");
-        }
         if login.is_some() {
             url.query_pairs_mut().append_pair("login", login.unwrap());
         }
@@ -112,17 +100,11 @@ where
             url.query_pairs_mut()
                 .append_pair("password", password.unwrap());
         }
-        let scheme = match tls {
-            true => "wss",
-            false => "ws",
-        };
-        url.set_scheme(scheme).expect("fail set url scheme");
 
         Ok(Websocket {
             cid,
             opcode,
             url,
-            tls,
             protocol,
             tcp_stream: None,
             ws_stream: None,
@@ -160,7 +142,8 @@ where
             }
         };
 
-        self.ws_stream = match self.tls {
+        let scheme = self.url.scheme();            
+        self.ws_stream = match scheme == "wss" || scheme == "https" {
             false => Some(WsStream::Tcp(tcp_stream)),
             true => {
                 // Attempt to create a TLS connection to the remote Server on the TCP Stream
