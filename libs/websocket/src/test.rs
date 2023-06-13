@@ -85,20 +85,44 @@ pub fn local(tls: bool) -> Result<bool, Error> {
 
     log::info!("Waiting for echo back from test websocket server");
 
-    let msg = xous::receive_message(sid).unwrap();
-    log::info!("Received message {:?}", msg);
     let mut success = false;
-    match FromPrimitive::from_usize(msg.body.id()) {
-        Some(TestOpcode::Receive) => {
-            log::info!("TestOpcode::Receive");
-            let len = msg.body.to_usize()[5];
-            let buf = unsafe { Buffer::from_memory_message(msg.body.memory_message().unwrap()) };
-            let echo = std::str::from_utf8(&buf[..len]).unwrap();
-            log::info!("*** {} ***", &echo);
-            success = String::from(echo) == test_msg;
-        }
-        None => {
-            log::error!("couldn't convert opcode: {:?}", msg);
+    let mut attempts = 25;
+    while attempts > 0 {
+        match xous::try_receive_message(sid) {
+            Ok(None) => {
+                attempts -= 1;
+                match 0.cmp(&attempts) {
+                    Ordering::Equal => {
+                        log::info!("timed-out waiting for echo");
+                        break;
+                    }
+                    _ => {
+                        tt.sleep_ms(200).unwrap();
+                    }
+                }
+            }
+            Ok(Some(msg)) => {
+                attempts = 0;
+                log::info!("Received message {:?}", msg);
+                match FromPrimitive::from_usize(msg.body.id()) {
+                    Some(TestOpcode::Receive) => {
+                        log::info!("TestOpcode::Receive");
+                        let len = msg.body.to_usize()[5];
+                        let buf = unsafe {
+                            Buffer::from_memory_message(msg.body.memory_message().unwrap())
+                        };
+                        let echo = std::str::from_utf8(&buf[..len]).unwrap();
+                        log::info!("*** {} ***", &echo);
+                        success = String::from(echo) == test_msg;
+                    }
+                    None => {
+                        log::error!("couldn't convert opcode: {:?}", msg);
+                    }
+                }
+            }
+            Err(e) => {
+                log::warn!("{:?}", e);
+            }
         }
     }
 
