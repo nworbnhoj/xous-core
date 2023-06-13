@@ -1,6 +1,6 @@
 mod test_server;
 
-use super::{LendData, Opcode, Websocket, Error, server};
+use super::{server, Error, LendData, Opcode, Websocket};
 use num_traits::{FromPrimitive, ToPrimitive};
 use rand::rngs::OsRng;
 use std::thread;

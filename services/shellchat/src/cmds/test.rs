@@ -775,9 +775,9 @@ impl<'a> ShellCmdApi<'a> for Test {
                     log::info!("testing websocket local");
                     let result = match env.com.wlan_set_on() {
                         Ok(_) => {
-                            match websocket::test::local(false) {
-                                Ok(true) => "Successful local websocket test",
-                                Ok(false) => "Failed local websocket test",
+                            let result = match websocket::test::test_local() {
+                                Ok(true) => "Local tcp websocket test success",
+                                Ok(false) => "Local tcp websocket test fail",
                                 Err(_) => "Error in websocket test",
                             }
                         }

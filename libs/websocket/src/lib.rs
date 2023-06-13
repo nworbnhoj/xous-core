@@ -16,7 +16,7 @@ use std::net::TcpStream;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use url::Url;
+use url::{ParseError, Url};
 use webpki_roots::TLS_SERVER_ROOTS;
 use ws::framer::Framer;
 use ws::WebSocketCloseStatusCode as StatusCode;
@@ -84,52 +84,51 @@ where
         cid: CID,
         opcode: usize,
         rng: TRng,
-    ) -> Result<Websocket<'a, TRng>, Error> {
+    ) -> Result<Websocket<'a, TRng>, ParseError> {
         // construct url
-        let mut url = match Url::parse(url) {
-            Ok(url) => url,
+        match Url::parse(url) {
+            Ok(mut url) => {
+                if login.is_some() {
+                    url.query_pairs_mut().append_pair("login", login.unwrap());
+                }
+                if password.is_some() {
+                    url.query_pairs_mut()
+                        .append_pair("password", password.unwrap());
+                }
+                Ok(Websocket {
+                    cid,
+                    opcode,
+                    url,
+                    protocol,
+                    tcp_stream: None,
+                    ws_stream: None,
+                    read_buf: [0u8; WEBSOCKET_READ_LEN],
+                    cursor: 0,
+                    write_buf: [0u8; WEBSOCKET_WRITE_LEN],
+                    ws_client: WebSocketClient::new_client(rng),
+                })
+            }
             Err(e) => {
                 log::warn!("invalid websocket host {:?}", e);
-                return Err(Error::from(ErrorKind::InvalidInput));
+                Err(e)
             }
-        };
-        if login.is_some() {
-            url.query_pairs_mut().append_pair("login", login.unwrap());
         }
-        if password.is_some() {
-            url.query_pairs_mut()
-                .append_pair("password", password.unwrap());
-        }
-
-        Ok(Websocket {
-            cid,
-            opcode,
-            url,
-            protocol,
-            tcp_stream: None,
-            ws_stream: None,
-            read_buf: [0u8; WEBSOCKET_READ_LEN],
-            cursor: 0,
-            write_buf: [0u8; WEBSOCKET_WRITE_LEN],
-            ws_client: WebSocketClient::new_client(rng),
-        })
     }
 
     pub fn open(&mut self) -> Result<Option<String>, Error> {
         log::info!("Opening WebSocket");
-
-        // Create a TCP Stream between this device and the remote Server
         let tcp_url = format!(
-            "{}:{}",
+            "{}:{:?}",
             self.url.host_str().unwrap(),
-            self.url.port().unwrap()
+            self.url.port_or_known_default().unwrap()
         );
+
         log::info!("Opening TCP connection to {:?}", tcp_url);
         let tcp_stream = match TcpStream::connect(tcp_url.clone()) {
             Ok(tcp_stream) => tcp_stream,
             Err(e) => {
                 log::warn!("Failed to open TCP Stream {:?}", e);
-                return Err(Error::from(ErrorKind::ConnectionRefused));
+                return Err(Error::new(ErrorKind::Other, "failed to connect tcp"));
             }
         };
         log::info!("TCP connected to {:?}", tcp_url);
@@ -142,7 +141,7 @@ where
             }
         };
 
-        let scheme = self.url.scheme();            
+        let scheme = self.url.scheme();
         self.ws_stream = match scheme == "wss" || scheme == "https" {
             false => Some(WsStream::Tcp(tcp_stream)),
             true => {
@@ -177,7 +176,8 @@ where
                     }
                     Err(e) => {
                         log::warn!("Failed to initiate tls client connection {}", e);
-                        None // Abort connection if tls requested but not achieved??
+                        // Abort connection if tls requested but not achieved
+                        return Err(Error::new(ErrorKind::Other, "failed to connect tls"));
                     }
                 }
             }
@@ -216,7 +216,7 @@ where
                 },
                 Err(e) => {
                     log::warn!("Unable to connect WebSocket {:?}", e);
-                    return Err(Error::from(ErrorKind::ConnectionRefused));
+                    return Err(Error::new(ErrorKind::Other, "failed to connect ws"));
                 }
             },
             None => {
@@ -392,7 +392,7 @@ where
 
     match websocket.open() {
         Err(e) => {
-            log::warn!("Unable to open Websocket - sorry it didnt work out. {}", e);
+            log::warn!("Unable to open Websocket: {}", e);
         }
         Ok(_protocol) => {
             // build a thread that emits a regular Opcode::Tick to send a KeepAliveRequest
