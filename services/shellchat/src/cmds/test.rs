@@ -773,18 +773,36 @@ impl<'a> ShellCmdApi<'a> for Test {
                 }
                 "websocket" => {
                     log::info!("testing websocket local");
-                    let result = match env.com.wlan_set_on() {
+                    match env.com.wlan_set_on() {
                         Ok(_) => {
-                            let result = match websocket::test::test_local() {
+                            let result = match websocket::test::test_echo_local() {
                                 Ok(true) => "Local tcp websocket test success",
                                 Ok(false) => "Local tcp websocket test fail",
                                 Err(_) => "Error in websocket test",
-                            }
+                            };
+                            log::info!("{}", result);
+                            write!(ret, "\n{}", result).ok();
+
+                            let result = match websocket::test::test_echo(
+                                "wss://ws.postman-echo.com/raw",
+                                //"https://chat.staging.signal.org",
+                                None,
+                                None,
+                                None,
+                            ) {
+                                Ok(true) => "Remote tls websocket test success",
+                                Ok(false) => "Remote tls websocket test fail",
+                                Err(_) => "Error in websocket test",
+                            };
+                            log::info!("{}", result);
+                            write!(ret, "\n{}", result).ok();
                         }
-                        Err(e) => "Failed to turn on WiFi",
+                        Err(e) => {
+                            let result = "Failed to turn on WiFi";
+                            log::info!("{}: {:?}", result, e);
+                            write!(ret, "\n{}", result).ok();
+                        }
                     };
-                    log::info!("{}", result);
-                    write!(ret, "\n{}", result).ok();
                 }
                 _ => {
                     () // do nothing

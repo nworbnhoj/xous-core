@@ -2,7 +2,8 @@ mod test_server;
 
 use super::{server, Error, LendData, Opcode, Websocket};
 use num_traits::{FromPrimitive, ToPrimitive};
-use rand::rngs::OsRng;
+use rand_chacha::rand_core::OsRng;
+use std::cmp::Ordering;
 use std::thread;
 use xous::send_message;
 use xous::{MemoryMessage, MemoryRange, MemorySize, Message, CID};
@@ -13,13 +14,13 @@ enum TestOpcode {
     Receive,
 }
 
-pub fn local(tls: bool) -> Result<bool, Error> {
-    //log_server::init_wait().unwrap();
-    log::set_max_level(log::LevelFilter::Info);
-    log::trace!("my PID is {}", xous::process::id());
-    let sid = xous::create_server().unwrap();
-    let cid = xous::connect(sid).expect("failed get CID for ws_test");
+impl Into<usize> for TestOpcode {
+    fn into(self) -> usize {
+        self as usize
+    }
+}
 
+pub fn test_echo_local() -> Result<bool, Error> {
     log::info!("Starting local websocket server");
     thread::spawn({
         move || {
@@ -27,23 +28,56 @@ pub fn local(tls: bool) -> Result<bool, Error> {
         }
     });
     log::info!("Started local websocket server on 127.0.0.1:1337");
-    test(
-        "ws://127.0.0.1:1337/test",
-        None,
-        None,
-        Some("test"),
-        cid,
-        0,
-        OsRng,
-    )
-    .expect("failed to create Websocket struct");
-    log::info!("Starting local websocket server");
+    test_echo("ws://127.0.0.1:1337/test", None, None, Some("test"))
+}
 
+pub fn test_echo(
+    url: &str,
+    login: Option<&str>,
+    password: Option<&str>,
+    protocol: Option<&str>,
+) -> Result<bool, Error> {
+    log::set_max_level(log::LevelFilter::Info);
+    let sid = xous::create_server().unwrap();
+    let cid = xous::connect(sid).expect("failed get CID for ws_test");
+    let tt = ticktimer_server::Ticktimer::new().unwrap();
+
+    let url = url.to_string();
+    let login = if login.is_some() {
+        Some(login.unwrap().to_string())
+    } else {
+        None
+    };
+    let password = if password.is_some() {
+        Some(password.unwrap().to_string())
+    } else {
+        None
+    };
+    let protocol = if protocol.is_some() {
+        Some(protocol.unwrap().to_string())
+    } else {
+        None
+    };
+
+    log::info!(
+        "Starting local websocket server: {:?} : {:?}",
+        url,
+        protocol
+    );
     let ws_sid = xous::create_server().unwrap();
     let ws_cid: CID = xous::connect(ws_sid).expect("failed get CID for ws_test");
-
     thread::spawn({
         move || {
+            let mut websocket = Websocket::new(
+                &url,
+                login.as_deref(),
+                password.as_deref(),
+                protocol.as_deref(),
+                cid,
+                TestOpcode::Receive.into(),
+                OsRng,
+            )
+            .expect("failed to create Websocket struct");
             server(ws_sid, &mut websocket);
         }
     });
