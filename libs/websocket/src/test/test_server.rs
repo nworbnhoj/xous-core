@@ -110,12 +110,17 @@ fn handle_client(mut stream: TcpStream) -> Result<(), WebServerError> {
 
         // read websocket frames
         let tt = Ticktimer::new().unwrap();
-        match framer.read_binary(&mut stream, &mut frame_buf)? {
-            Some(bytes) => {
-                log::info!("Received {} bytes", bytes.len());
+        match framer.read_text(&mut stream, &mut frame_buf)? {
+            Some(txt) => {
+                log::info!("Received {} bytes", txt.len());
                 // send the bytes back to the client
-                match framer.write(&mut stream, WebSocketSendMessageType::Binary, true, bytes) {
-                    Ok(_) => log::info!("Wrote {} bytes to websocket", bytes.len()),
+                match framer.write(
+                    &mut stream,
+                    WebSocketSendMessageType::Text,
+                    true,
+                    txt.as_bytes(),
+                ) {
+                    Ok(_) => log::info!("Wrote {} bytes to websocket", txt.len()),
                     Err(e) => log::info!("Failed to write to websocket: {:?}", e),
                 }
             }

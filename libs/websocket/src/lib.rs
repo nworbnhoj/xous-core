@@ -273,7 +273,7 @@ where
                     &mut self.write_buf,
                     &mut self.ws_client,
                 );
-                match framer.read_binary(stream, &mut bytes.0[..]) {
+                match framer.read_text(stream, &mut bytes.0[..]) {
                     Ok(Some(f)) => {
                         let len = f.len();
                         log::info!("Read {} bytes from Websocket", len);
@@ -332,7 +332,7 @@ where
                     } else {
                         slice = &buffer[start..(start + XOUS_MSG_PAGE_SIZE)];
                     }
-                    ret = match framer.write(stream, MessageType::Binary, end_of_message, slice) {
+                    ret = match framer.write(stream, MessageType::Text, end_of_message, slice) {
                         Ok(ret) => Ok(ret),
                         Err(_e) => {
                             return Err(Error::new(
