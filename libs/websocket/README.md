@@ -9,16 +9,14 @@ Once a Websocket instance is created and server started then a websocket is open
 ```Rust
 // configure websocket
 let mut websocket = Websocket::new(
-    "signal.org",         // host
-    Some(1337),           // port
-    Some("/test"),        // path
-    None,                 // username
-    None,                 // password
-    false,                // tls connection
-    Some("test"),         // sub-protocol request
-    cid,                  // cid callback for inbound ws frames
-    0,                    // opcode callback for inboud ws frames
-    OsRng,                // random number gen
+    "wss://ws.postman-echo.com/raw", // url
+    None,                            // username
+    None,                            // password
+    false,                           // tls connection
+    Some("test"),                    // sub-protocol request
+    cid,                             // cid callback for inbound ws frames
+    0,                               // opcode callback for inboud ws frames
+    OsRng,                           // random number gen
 )
 
 // start websocket server

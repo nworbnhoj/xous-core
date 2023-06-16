@@ -9,7 +9,9 @@ pub mod test;
 use embedded_websocket as ws;
 use num_traits::FromPrimitive;
 use rand_chacha::rand_core::RngCore;
-use rustls::{ServerName, StreamOwned};
+use rustls::{
+    ClientConfig, ClientConnection, OwnedTrustAnchor, RootCertStore, ServerName, StreamOwned,
+};
 use std::convert::{TryFrom, TryInto};
 use std::io::{Error, ErrorKind};
 use std::net::TcpStream;
@@ -133,6 +135,7 @@ where
         };
         log::info!("TCP connected to {:?}", tcp_url);
 
+        // clone the tcp_stream for later peek
         self.tcp_stream = match tcp_stream.try_clone() {
             Ok(stream) => Some(stream),
             Err(e) => {
@@ -146,16 +149,16 @@ where
             false => Some(WsStream::Tcp(tcp_stream)),
             true => {
                 // Attempt to create a TLS connection to the remote Server on the TCP Stream
-                let mut root_certs = rustls::RootCertStore::empty();
+                let mut root_certs = RootCertStore::empty();
                 root_certs.add_server_trust_anchors(TLS_SERVER_ROOTS.0.iter().map(|ta| {
-                    rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
+                    OwnedTrustAnchor::from_subject_spki_name_constraints(
                         ta.subject,
                         ta.spki,
                         ta.name_constraints,
                     )
                 }));
 
-                let ssl_config = rustls::ClientConfig::builder()
+                let ssl_config = ClientConfig::builder()
                     .with_safe_defaults()
                     .with_root_certificates(root_certs)
                     .with_no_client_auth();
@@ -163,21 +166,19 @@ where
 
                 let server_name = ServerName::try_from(self.url.host_str().unwrap())
                     .expect("Unable to construct ServerName from url");
-                match rustls::ClientConnection::new(rc_config, server_name) {
+
+                match ClientConnection::new(rc_config, server_name) {
                     Ok(client_connection) => {
                         log::info!(
                             "Established tls connection with {:?}",
                             self.url.host_str().unwrap()
                         );
-                        Some(WsStream::Tls(StreamOwned::new(
-                            client_connection,
-                            tcp_stream,
-                        )))
+                        let tls_stream = StreamOwned::new(client_connection, tcp_stream);
+                        Some(WsStream::Tls(tls_stream))
                     }
                     Err(e) => {
-                        log::warn!("Failed to initiate tls client connection {}", e);
-                        // Abort connection if tls requested but not achieved
-                        return Err(Error::new(ErrorKind::Other, "failed to connect tls"));
+                        log::warn!("failed to initiate tls client connection {}", e);
+                        Some(WsStream::Tcp(tcp_stream))
                     }
                 }
             }
@@ -208,24 +209,37 @@ where
             sub_protocols,
             additional_headers: None,
         };
+
         let sub_protocol = match &mut self.ws_stream {
-            Some(stream) => match framer.connect(stream, &options) {
-                Ok(opt) => match opt {
-                    Some(sp) => Some(sp.to_string()),
-                    None => None,
-                },
-                Err(e) => {
-                    log::warn!("Unable to connect WebSocket {:?}", e);
-                    return Err(Error::new(ErrorKind::Other, "failed to connect ws"));
-                }
-            },
+            Some(stream) => {
+                let protocol = match framer.connect(stream, &options) {
+                    Ok(opt) => match opt {
+                        Some(sp) => Some(sp.to_string()),
+                        None => None,
+                    },
+                    Err(e) => {
+                        log::warn!("Unable to connect WebSocket {:?}", e);
+                        return Err(Error::new(ErrorKind::Other, "failed to connect ws"));
+                    }
+                };
+                log::info!("WebSocket connected with sub-protocol: {:?}", protocol);
+                protocol
+            }
             None => {
                 log::warn!("No stream available for Websocket");
                 None
             }
         };
 
-        log::info!("WebSocket connected with protocol: {:?}", sub_protocol);
+        match &self.ws_stream {
+            Some(WsStream::Tls(client)) => {
+                log::info!(
+                    "###########Client certificates: {:?}",
+                    client.conn.peer_certificates()
+                )
+            }
+            _ => (),
+        };
 
         Ok(sub_protocol)
     }
