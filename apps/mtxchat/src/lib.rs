@@ -453,16 +453,17 @@ impl<'a> MtxChat<'a> {
         if self.filter.len() > 0 {
             true
         } else {
-            let mut user_server = String::new();
-            write!(
-                user_server,
-                "{}{}",
-                HTTPS,
-                &self.get_or(USER_DOMAIN_KEY, DOMAIN_MATRIX)
-            )
-            .expect("failed to write server");
+            let mut server = String::new();
+            write!(server, "{}{}", HTTPS, &self.user_domain).expect("failed to write server");
+            log::info!(
+                "get_filter {} : {} : {} : {}",
+                &self.user_id,
+                &server,
+                &self.room_id,
+                &self.token
+            );
             if let Some(new_filter) =
-                web::get_filter(&self.user_id, &user_server, &self.room_id, &self.token)
+                web::get_filter(&self.user_id, &server, &self.room_id, &self.token)
             {
                 self.set_debug(FILTER_KEY, &new_filter);
                 true
