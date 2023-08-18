@@ -4,6 +4,7 @@
 mod emoji;
 use emoji::*;
 
+use gam::{MenuItem, MenuPayload};
 use gam::api::SetCanvasBoundsRequest;
 use ime_plugin_api::{ImefCallback, ImefDescriptor, ImefOpcode};
 
@@ -63,8 +64,8 @@ struct InputTracker {
     /// keep track if our box was grown
     was_grown: bool,
 
-    /// if set to true, the F1-F4 keys work as menu selects, and not as predictive inputs
-    menu_mode: bool,
+    /// if Some, then the F1-F4 keys work as menu selects, and not as predictive inputs
+    menu: Option<[MenuItem; MAX_PREDICTION_OPTIONS]>,
 
     /// render the predictions. Slightly awkward because this code comes from before we had libstd
     pred_options: [Option<String>; MAX_PREDICTION_OPTIONS],
@@ -91,7 +92,7 @@ impl InputTracker {
             last_height: 0,
             was_grown: false,
             pred_options: Default::default(),
-            menu_mode: false,
+            menu: None,
             #[cfg(feature="tts")]
             tts: TtsFrontend::new(xns).unwrap(),
         }
@@ -130,8 +131,8 @@ impl InputTracker {
     pub fn activate_emoji(&self) {
         self.gam.raise_menu(gam::EMOJI_MENU_NAME).expect("couldn't activate emoji menu");
     }
-    pub fn set_menu_mode(&mut self, mode: bool) {
-        self.menu_mode = mode;
+    pub fn set_menu(&mut self, menu: Option<[MenuItem; 4]>) {
+        self.menu = menu;
     }
 
     pub fn clear_area(&mut self) -> Result<(), xous::Error> {
@@ -269,7 +270,7 @@ impl InputTracker {
                 match k {
                     '\u{0000}' => (),
                     '←' => { // move insertion point back
-                        if !self.menu_mode {
+                        if self.menu.is_none() {
                             if self.insertion > 0 {
                                 log::debug!("moving insertion point back");
                                 self.insertion -= 1;
@@ -283,7 +284,7 @@ impl InputTracker {
                         }
                     }
                     '→' => {
-                        if !self.menu_mode {
+                        if self.menu.is_none() {
                             if self.insertion < self.characters {
                                 self.insertion += 1;
                             }
@@ -296,7 +297,7 @@ impl InputTracker {
                         }
                     }
                     '↑' => {
-                        if !self.menu_mode {
+                        if self.menu.is_none() {
                             // bring the insertion point to the front of the text box
                             self.insertion = 0;
                             do_redraw = true;
@@ -308,7 +309,7 @@ impl InputTracker {
                         }
                     }
                     '↓' => {
-                        if !self.menu_mode {
+                        if self.menu.is_none() {
                             // bring insertion point to the very end of the text box
                             self.insertion = self.characters;
                             do_redraw = true;
@@ -322,37 +323,41 @@ impl InputTracker {
                         }
                     }
                     '\u{0011}' => { // F1
-                        if !self.menu_mode {
+                        if self.menu.is_none() {
                             self.insert_prediction(0);
                             do_redraw = true;
                         } else {
+                            self.menu_action(0);
                             retstring = Some(xous_ipc::String::<4000>::from_str("\u{0011}"));
                             do_redraw = true;
                         }
                     }
                     '\u{0012}' => { // F2
-                        if !self.menu_mode {
+                        if self.menu.is_none() {
                             self.insert_prediction(1);
                             do_redraw = true;
                         } else {
+                            self.menu_action(1);
                             retstring = Some(xous_ipc::String::<4000>::from_str("\u{0012}"));
                             do_redraw = true;
                         }
                     }
                     '\u{0013}' => { // F3
-                        if !self.menu_mode {
+                        if self.menu.is_none() {
                             self.insert_prediction(2);
                             do_redraw = true;
                         } else {
+                            self.menu_action(2);
                             retstring = Some(xous_ipc::String::<4000>::from_str("\u{0013}"));
                             do_redraw = true;
                         }
                     }
                     '\u{0014}' => { // F4
-                        if !self.menu_mode {
+                        if self.menu.is_none() {
                             self.insert_prediction(3);
                             do_redraw = true;
                         } else {
+                            self.menu_action(3);
                             retstring = Some(xous_ipc::String::<4000>::from_str("\u{0014}"));
                             do_redraw = true;
                         }
@@ -374,7 +379,7 @@ impl InputTracker {
                                     update_predictor = true;
                                 }
                                 self.pred_phrase.pop();
-                                if self.menu_mode { update_predictor = true; }
+                                if self.menu.is_none() { update_predictor = true; }
                             }
                         } else if (self.characters > 0)  && (self.insertion > 0) {
                             if debug1{info!("mid-string backspace case")}
@@ -409,7 +414,7 @@ impl InputTracker {
                             self.insertion -= 1;
                             self.characters -= 1;
                             do_redraw = true;
-                            if self.menu_mode { update_predictor = true; }
+                            if self.menu.is_none() { update_predictor = true; }
                         } else {
                             // ignore, we are either at the front of the string, or the string had no characters
                         }
@@ -589,15 +594,20 @@ impl InputTracker {
             if debug1{info!("got pc_bound {:?}", pc_bounds);}
 
             if update_predictor {
-                if self.pred_phrase.len() > 0 || self.menu_mode {
+                if self.pred_phrase.len() > 0 || self.menu.is_none() {
                     if let Some(pred) = self.predictor {
                         pred.set_input(
                             xous_ipc::String::<4000>::from_str(&self.pred_phrase)).expect("couldn't update predictor with current input");
                     }
                 }
-
-                // Query the prediction engine for the latest predictions
-                if let Some(pred) = self.predictor {
+                
+                if let Some(menu) = self.menu {
+                    // Copy menu names into prediction_options
+                    for i in 0..self.pred_options.len() {
+                        self.pred_options[i] = Some(menu[i].name.to_string());
+                    }
+                } else if let Some(pred) = self.predictor {
+                    // Query the prediction engine for the latest predictions
                     for i in 0..self.pred_options.len() {
                         let p = if let Some(prediction) =
                         pred.get_prediction(i as u32, api_token).expect("couldn't query prediction engine") {
@@ -607,7 +617,7 @@ impl InputTracker {
                         };
                         self.pred_options[i] = p;
                     }
-                }
+                } 
             }
 
             // count the number of valid options
@@ -671,6 +681,31 @@ impl InputTracker {
         self.gam.redraw().expect("couldn't redraw screen");
 
         Ok(retstring)
+    }
+
+    fn menu_action(&self, menu_item_index: usize){
+        if let Some(menu) = self.menu {
+            let mi = menu[menu_item_index];
+            #[cfg(feature="tts")]
+            {
+                let mut phrase = "select ".to_string();
+                phrase.push_str(mi.name.as_str().unwrap());
+                self.tts.tts_blocking(&phrase).unwrap();
+            }
+            if let Some(action) = mi.action_conn {
+                match mi.action_payload {
+                    MenuPayload::Scalar(args) => {
+                        xous::send_message(action,
+                            xous::Message::new_scalar(mi.action_opcode as usize,
+                                args[0] as usize, args[1] as usize, args[2] as usize, args[3] as usize)
+                        ).expect("couldn't send menu action");
+                    },
+                    MenuPayload::Memory((_buf, _len)) => {
+                        unimplemented!("menu buffer targets are a future feature");
+                    }
+                }
+            }
+        }
     }
 }
 
